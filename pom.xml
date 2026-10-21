@@ -10,6 +10,7 @@
     <packaging>pom</packaging>
 
     <modules>
+        <module>sync-core</module>
         <module>sync-server</module>
         <module>desktop-client</module>
     </modules>
