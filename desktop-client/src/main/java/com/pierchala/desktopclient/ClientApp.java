@@ -3,8 +3,11 @@ package com.pierchala.desktopclient;
 import com.pierchala.desktopclient.db.DatabaseManager;
 import com.pierchala.desktopclient.db.OrderDao;
 import com.pierchala.desktopclient.model.LocalOrder;
+import com.pierchala.desktopclient.net.SyncHttpClient;
+import com.pierchala.desktopclient.sync.SyncCoordinator;
 import com.pierchala.synccore.model.SyncStatus;
 import javafx.application.Application;
+import javafx.application.Platform;
 import javafx.beans.property.SimpleObjectProperty;
 import javafx.beans.property.SimpleStringProperty;
 import javafx.collections.FXCollections;
@@ -21,10 +24,12 @@ import javafx.stage.Stage;
 import java.math.BigDecimal;
 import java.time.Instant;
 import java.util.UUID;
+import java.util.concurrent.CompletableFuture;
 
 public class ClientApp extends Application {
 
     private final OrderDao orderDao = new OrderDao();
+    private final SyncCoordinator syncCoordinator = new SyncCoordinator(orderDao, new SyncHttpClient());
     private final ObservableList<LocalOrder> orderList = FXCollections.observableArrayList();
     private TableView<LocalOrder> tableView;
 
@@ -54,11 +59,17 @@ public class ClientApp extends Application {
         Button addButton = new Button("Add Order (Offline / Local DB)");
         addButton.setStyle("-fx-background-color: #2563eb; -fx-text-fill: white; -fx-font-weight: bold;");
 
+        Button syncButton = new Button("Sync Now");
+        syncButton.setStyle("-fx-background-color: #16a34a; -fx-text-fill: white; -fx-font-weight: bold;");
+
+        Label statusLabel = new Label("Ready");
+        statusLabel.setStyle("-fx-text-fill: #4b5563; -fx-font-size: 11px;");
+
         HBox.setHgrow(orderNumberField, Priority.ALWAYS);
         HBox.setHgrow(customerNameField, Priority.ALWAYS);
         HBox.setHgrow(amountField, Priority.ALWAYS);
 
-        HBox formBox = new HBox(10, orderNumberField, customerNameField, amountField, addButton);
+        HBox formBox = new HBox(10, orderNumberField, customerNameField, amountField, addButton, syncButton);
         formBox.setPadding(new Insets(10));
         formBox.setAlignment(Pos.CENTER_LEFT);
 
@@ -141,17 +152,43 @@ public class ClientApp extends Application {
                 orderNumberField.clear();
                 customerNameField.clear();
                 amountField.clear();
+                statusLabel.setText("Saved locally (offline).");
             } catch (NumberFormatException ex) {
                 showAlert("Validation Error", "Amount must be a valid number (e.g., 150.50).");
             }
         });
 
+        // Trigger sync action in background
+        syncButton.setOnAction(e -> {
+            syncButton.setDisable(true);
+            statusLabel.setText("Synchronizing with server...");
+
+            CompletableFuture.supplyAsync(() -> {
+                try {
+                    return syncCoordinator.performPushSync();
+                } catch (Exception ex) {
+                    throw new RuntimeException(ex);
+                }
+            }).thenAccept(syncedCount -> Platform.runLater(() -> {
+                refreshTable();
+                syncButton.setDisable(false);
+                statusLabel.setText("Sync complete. Updated " + syncedCount + " item(s).");
+            })).exceptionally(throwable -> {
+                Platform.runLater(() -> {
+                    syncButton.setDisable(false);
+                    statusLabel.setText("Sync failed: " + throwable.getCause().getMessage());
+                    showAlert("Sync Error", "Could not reach server: " + throwable.getCause().getMessage());
+                });
+                return null;
+            });
+        });
+
         // Main layout container
-        VBox root = new VBox(10, formBox, tableView);
+        VBox root = new VBox(10, formBox, tableView, statusLabel);
         root.setPadding(new Insets(10));
         VBox.setVgrow(tableView, Priority.ALWAYS);
 
-        Scene scene = new Scene(root, 800, 500);
+        Scene scene = new Scene(root, 880, 520);
         stage.setScene(scene);
         stage.show();
 
