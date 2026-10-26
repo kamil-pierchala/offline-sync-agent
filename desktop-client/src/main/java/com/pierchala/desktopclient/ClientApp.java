@@ -165,7 +165,7 @@ public class ClientApp extends Application {
 
             CompletableFuture.supplyAsync(() -> {
                 try {
-                    return syncCoordinator.performPushSync();
+                    return syncCoordinator.performFullSync();
                 } catch (Exception ex) {
                     throw new RuntimeException(ex);
                 }

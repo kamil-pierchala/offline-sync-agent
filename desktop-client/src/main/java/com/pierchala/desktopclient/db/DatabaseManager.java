@@ -14,7 +14,7 @@ public class DatabaseManager {
     }
 
     public static void initializeDatabase() {
-        String createTableSql = """
+        String createOrdersTableSql = """
             CREATE TABLE IF NOT EXISTS orders (
                 id TEXT PRIMARY KEY,
                 order_number TEXT NOT NULL,
@@ -27,9 +27,17 @@ public class DatabaseManager {
             );
             """;
 
+        String createMetadataTableSql = """
+            CREATE TABLE IF NOT EXISTS sync_metadata (
+                key TEXT PRIMARY KEY,
+                val TEXT NOT NULL
+            );
+            """;
+
         try (Connection conn = getConnection();
              Statement stmt = conn.createStatement()) {
-            stmt.execute(createTableSql);
+            stmt.execute(createOrdersTableSql);
+            stmt.execute(createMetadataTableSql);
         } catch (SQLException e) {
             throw new RuntimeException("Failed to initialize SQLite database", e);
         }

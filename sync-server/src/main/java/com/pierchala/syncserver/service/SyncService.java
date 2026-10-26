@@ -3,6 +3,7 @@ package com.pierchala.syncserver.service;
 import com.pierchala.synccore.model.OrderDto;
 import com.pierchala.synccore.model.SyncBatchRequest;
 import com.pierchala.synccore.model.SyncBatchResponse;
+import com.pierchala.synccore.model.SyncPullResponse;
 import com.pierchala.syncserver.entity.OrderEntity;
 import com.pierchala.syncserver.repository.OrderRepository;
 import org.springframework.stereotype.Service;
@@ -68,5 +69,25 @@ public class SyncService {
         }
 
         return new SyncBatchResponse(results);
+    }
+
+    public SyncPullResponse fetchUpdatesSince(Instant since) {
+        Instant fetchTime = Instant.now();
+        Instant querySince = (since != null) ? since : Instant.EPOCH;
+
+        List<OrderDto> dtos = orderRepository.findByUpdatedAtAfterOrderByUpdatedAtAsc(querySince)
+                .stream()
+                .map(entity -> new OrderDto(
+                        entity.getId(),
+                        entity.getOrderNumber(),
+                        entity.getCustomerName(),
+                        entity.getTotalAmount(),
+                        entity.getStatus(),
+                        entity.getUpdatedAt(),
+                        entity.getVersion()
+                ))
+                .toList();
+
+        return new SyncPullResponse(dtos, fetchTime);
     }
 }

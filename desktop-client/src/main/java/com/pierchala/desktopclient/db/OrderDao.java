@@ -1,6 +1,7 @@
 package com.pierchala.desktopclient.db;
 
 import com.pierchala.desktopclient.model.LocalOrder;
+import com.pierchala.synccore.model.OrderDto;
 import com.pierchala.synccore.model.SyncStatus;
 
 import java.math.BigDecimal;
@@ -136,5 +137,63 @@ public class OrderDao {
         ps.setString(6, order.updatedAt().toString());
         ps.setLong(7, order.version());
         ps.setString(8, order.syncStatus().name());
+    }
+
+    public Optional<Instant> getLastSyncTimestamp() {
+        String sql = "SELECT val FROM sync_metadata WHERE key = 'last_sync_timestamp'";
+        try (Connection conn = DatabaseManager.getConnection();
+             PreparedStatement ps = conn.prepareStatement(sql);
+             ResultSet rs = ps.executeQuery()) {
+            if (rs.next()) {
+                return Optional.of(Instant.parse(rs.getString("val")));
+            }
+        } catch (SQLException e) {
+            e.printStackTrace();
+        }
+        return Optional.empty();
+    }
+
+    public void setLastSyncTimestamp(Instant timestamp) {
+        String sql = """
+            INSERT INTO sync_metadata (key, val) VALUES ('last_sync_timestamp', ?)
+            ON CONFLICT(key) DO UPDATE SET val = excluded.val
+        """;
+        try (Connection conn = DatabaseManager.getConnection();
+             PreparedStatement ps = conn.prepareStatement(sql)) {
+            ps.setString(1, timestamp.toString());
+            ps.executeUpdate();
+        } catch (SQLException e) {
+            e.printStackTrace();
+        }
+    }
+
+    public void upsertFromServer(OrderDto dto) {
+        // Upsert record from server ensuring local status is SYNCED
+        String sql = """
+            INSERT INTO orders (id, order_number, customer_name, total_amount, status, updated_at, version, sync_status)
+            VALUES (?, ?, ?, ?, ?, ?, ?, 'SYNCED')
+            ON CONFLICT(id) DO UPDATE SET
+                order_number = excluded.order_number,
+                customer_name = excluded.customer_name,
+                total_amount = excluded.total_amount,
+                status = excluded.status,
+                updated_at = excluded.updated_at,
+                version = excluded.version,
+                sync_status = 'SYNCED'
+            WHERE orders.sync_status = 'SYNCED' OR excluded.version >= orders.version
+        """;
+        try (Connection conn = DatabaseManager.getConnection();
+             PreparedStatement ps = conn.prepareStatement(sql)) {
+            ps.setString(1, dto.id().toString());
+            ps.setString(2, dto.orderNumber());
+            ps.setString(3, dto.customerName());
+            ps.setBigDecimal(4, dto.totalAmount());
+            ps.setString(5, dto.status());
+            ps.setString(6, dto.updatedAt().toString());
+            ps.setLong(7, dto.version());
+            ps.executeUpdate();
+        } catch (SQLException e) {
+            e.printStackTrace();
+        }
     }
 }
