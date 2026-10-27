@@ -122,6 +122,34 @@ public class ClientApp extends Application {
         tableView.getColumns().addAll(colNumber, colCustomer, colAmount, colStatus, colSync);
         tableView.setItems(orderList);
 
+        // Context menu for row deletion
+        ContextMenu contextMenu = new ContextMenu();
+        MenuItem deleteItem = new MenuItem("Delete Order");
+        deleteItem.setStyle("-fx-text-fill: #dc2626;");
+
+        deleteItem.setOnAction(event -> {
+            LocalOrder selected = tableView.getSelectionModel().getSelectedItem();
+            if (selected != null) {
+                orderDao.markAsDeleted(selected.id());
+                refreshTable();
+                statusLabel.setText("Order marked for deletion (offline).");
+            }
+        });
+
+        contextMenu.getItems().add(deleteItem);
+
+        tableView.setRowFactory(tv -> {
+            TableRow<LocalOrder> row = new TableRow<>();
+            row.emptyProperty().addListener((obs, wasEmpty, isEmpty) -> {
+                if (isEmpty) {
+                    row.setContextMenu(null);
+                } else {
+                    row.setContextMenu(contextMenu);
+                }
+            });
+            return row;
+        });
+
         // Order creation action
         addButton.setOnAction(e -> {
             String num = orderNumberField.getText().trim();
@@ -169,10 +197,11 @@ public class ClientApp extends Application {
                 } catch (Exception ex) {
                     throw new RuntimeException(ex);
                 }
-            }).thenAccept(syncedCount -> Platform.runLater(() -> {
+            }).thenAccept(result -> Platform.runLater(() -> {
                 refreshTable();
                 syncButton.setDisable(false);
-                statusLabel.setText("Sync complete. Updated " + syncedCount + " item(s).");
+                statusLabel.setText(String.format("Sync complete. Pushed: %d, Pulled: %d.",
+                        result.pushedCount(), result.pulledCount()));
             })).exceptionally(throwable -> {
                 Platform.runLater(() -> {
                     syncButton.setDisable(false);

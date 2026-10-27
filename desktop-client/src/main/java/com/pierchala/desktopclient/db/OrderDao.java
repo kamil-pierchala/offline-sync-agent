@@ -196,4 +196,15 @@ public class OrderDao {
             e.printStackTrace();
         }
     }
+
+    public void markAsDeleted(UUID id) {
+        String sql = "UPDATE orders SET sync_status = 'DIRTY_DELETED' WHERE id = ?";
+        try (Connection conn = DatabaseManager.getConnection();
+             PreparedStatement ps = conn.prepareStatement(sql)) {
+            ps.setString(1, id.toString());
+            ps.executeUpdate();
+        } catch (SQLException e) {
+            throw new RuntimeException("Failed to mark order as deleted: " + id, e);
+        }
+    }
 }
