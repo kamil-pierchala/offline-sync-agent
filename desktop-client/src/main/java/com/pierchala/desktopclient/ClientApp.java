@@ -41,7 +41,7 @@ public class ClientApp extends Application {
 
     @Override
     public void start(Stage stage) {
-        stage.setTitle("Offline-First Sync Agent — Desktop Client");
+        stage.setTitle("Offline-First Sync Agent - Desktop Client");
 
         // Data input form
         TextField orderNumberField = new TextField();
@@ -109,6 +109,8 @@ public class ClientApp extends Application {
                     setText(item.name());
                     if (item == SyncStatus.DIRTY_CREATED) {
                         setStyle("-fx-text-fill: #ea580c; -fx-font-weight: bold;");
+                    } else if (item == SyncStatus.DIRTY_UPDATED) {
+                        setStyle("-fx-text-fill: #2563eb; -fx-font-weight: bold;");
                     } else if (item == SyncStatus.SYNCED) {
                         setStyle("-fx-text-fill: #16a34a; -fx-font-weight: bold;");
                     } else {
@@ -122,10 +124,18 @@ public class ClientApp extends Application {
         tableView.getColumns().addAll(colNumber, colCustomer, colAmount, colStatus, colSync);
         tableView.setItems(orderList);
 
-        // Context menu for row deletion
+        // Context menu for row editing and deletion
         ContextMenu contextMenu = new ContextMenu();
+        MenuItem editItem = new MenuItem("Edit Order");
         MenuItem deleteItem = new MenuItem("Delete Order");
         deleteItem.setStyle("-fx-text-fill: #dc2626;");
+
+        editItem.setOnAction(event -> {
+            LocalOrder selected = tableView.getSelectionModel().getSelectedItem();
+            if (selected != null) {
+                showEditDialog(selected);
+            }
+        });
 
         deleteItem.setOnAction(event -> {
             LocalOrder selected = tableView.getSelectionModel().getSelectedItem();
@@ -136,7 +146,7 @@ public class ClientApp extends Application {
             }
         });
 
-        contextMenu.getItems().add(deleteItem);
+        contextMenu.getItems().addAll(editItem, deleteItem);
 
         tableView.setRowFactory(tv -> {
             TableRow<LocalOrder> row = new TableRow<>();
@@ -235,6 +245,52 @@ public class ClientApp extends Application {
         alert.setHeaderText(null);
         alert.setContentText(message);
         alert.showAndWait();
+    }
+
+    private void showEditDialog(LocalOrder order) {
+        Dialog<ButtonType> dialog = new Dialog<>();
+        dialog.setTitle("Edit Order - " + order.orderNumber());
+        dialog.setHeaderText("Modify order details (saved locally in SQLite)");
+
+        ButtonType saveButtonType = new ButtonType("Save Changes", ButtonBar.ButtonData.OK_DONE);
+        dialog.getDialogPane().getButtonTypes().addAll(saveButtonType, ButtonType.CANCEL);
+
+        TextField customerField = new TextField(order.customerName());
+        TextField amountField = new TextField(order.totalAmount().toPlainString());
+
+        ComboBox<String> statusBox = new ComboBox<>();
+        statusBox.getItems().addAll("NEW", "IN_PROGRESS", "COMPLETED", "CANCELLED");
+        statusBox.setValue(order.status());
+
+        VBox content = new VBox(10);
+        content.setPadding(new Insets(15));
+        content.getChildren().addAll(
+                new Label("Customer Name:"), customerField,
+                new Label("Total Amount:"), amountField,
+                new Label("ERP Status:"), statusBox
+        );
+
+        dialog.getDialogPane().setContent(content);
+
+        dialog.showAndWait().ifPresent(response -> {
+            if (response == saveButtonType) {
+                try {
+                    String cust = customerField.getText().trim();
+                    BigDecimal amt = new BigDecimal(amountField.getText().trim());
+                    String status = statusBox.getValue();
+
+                    if (cust.isEmpty()) {
+                        showAlert("Validation Error", "Customer name cannot be empty.");
+                        return;
+                    }
+
+                    orderDao.update(order.id(), cust, amt, status);
+                    refreshTable();
+                } catch (NumberFormatException e) {
+                    showAlert("Validation Error", "Amount must be a valid number.");
+                }
+            }
+        });
     }
 
     public static void main(String[] args) {

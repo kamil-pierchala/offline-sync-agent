@@ -29,26 +29,36 @@ public class OrderDao {
         }
     }
 
-    public void update(LocalOrder order) {
-        String sql = """
-            UPDATE orders
-            SET order_number = ?, customer_name = ?, total_amount = ?, status = ?, updated_at = ?, version = ?, sync_status = ?
-            WHERE id = ?
-            """;
+    public void update(UUID id, String customerName, BigDecimal totalAmount, String status) {
+        String selectSql = "SELECT sync_status FROM orders WHERE id = ?";
+        String updateSql = "UPDATE orders SET customer_name = ?, total_amount = ?, status = ?, updated_at = ?, sync_status = ? WHERE id = ?";
 
-        try (Connection conn = DatabaseManager.getConnection();
-             PreparedStatement ps = conn.prepareStatement(sql)) {
-            ps.setString(1, order.orderNumber());
-            ps.setString(2, order.customerName());
-            ps.setBigDecimal(3, order.totalAmount());
-            ps.setString(4, order.status());
-            ps.setString(5, order.updatedAt().toString());
-            ps.setLong(6, order.version());
-            ps.setString(7, order.syncStatus().name());
-            ps.setString(8, order.id().toString());
-            ps.executeUpdate();
+        try (Connection conn = DatabaseManager.getConnection()) {
+            SyncStatus currentStatus = SyncStatus.DIRTY_UPDATED;
+            try (PreparedStatement selectStmt = conn.prepareStatement(selectSql)) {
+                selectStmt.setString(1, id.toString());
+                try (ResultSet rs = selectStmt.executeQuery()) {
+                    if (rs.next()) {
+                        SyncStatus existing = SyncStatus.valueOf(rs.getString("sync_status"));
+                        // if the record was created locally and has not yet been synchronized, we leave it as DIRTY_CREATED
+                        if (existing == SyncStatus.DIRTY_CREATED) {
+                            currentStatus = SyncStatus.DIRTY_CREATED;
+                        }
+                    }
+                }
+            }
+
+            try (PreparedStatement stmt = conn.prepareStatement(updateSql)) {
+                stmt.setString(1, customerName);
+                stmt.setBigDecimal(2, totalAmount);
+                stmt.setString(3, status);
+                stmt.setString(4, Instant.now().toString());
+                stmt.setString(5, currentStatus.name());
+                stmt.setString(6, id.toString());
+                stmt.executeUpdate();
+            }
         } catch (SQLException e) {
-            throw new RuntimeException("Failed to update order: " + order.id(), e);
+            throw new RuntimeException("Failed to update local order: " + id, e);
         }
     }
 
