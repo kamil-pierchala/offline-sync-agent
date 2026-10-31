@@ -18,13 +18,21 @@ import javafx.scene.Scene;
 import javafx.scene.control.*;
 import javafx.scene.layout.HBox;
 import javafx.scene.layout.Priority;
+import javafx.scene.layout.Region;
 import javafx.scene.layout.VBox;
+import javafx.scene.paint.Color;
+import javafx.scene.shape.Circle;
 import javafx.stage.Stage;
 
 import java.math.BigDecimal;
 import java.time.Instant;
+import java.time.LocalTime;
 import java.util.UUID;
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.Executors;
+import java.util.concurrent.ScheduledExecutorService;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicBoolean;
 
 public class ClientApp extends Application {
 
@@ -32,6 +40,15 @@ public class ClientApp extends Application {
     private final SyncCoordinator syncCoordinator = new SyncCoordinator(orderDao, new SyncHttpClient());
     private final ObservableList<LocalOrder> orderList = FXCollections.observableArrayList();
     private TableView<LocalOrder> tableView;
+
+    // Background auto-sync scheduler and concurrency control
+    private final ScheduledExecutorService autoSyncScheduler = Executors.newSingleThreadScheduledExecutor();
+    private final AtomicBoolean isSyncing = new AtomicBoolean(false);
+
+    // Status bar controls
+    private final Circle connectionDot = new Circle(5, Color.web("#9ca3af"));
+    private final Label connectionStatusLabel = new Label("Connecting...");
+    private final Label syncActivityLabel = new Label("Ready");
 
     @Override
     public void init() {
@@ -61,9 +78,6 @@ public class ClientApp extends Application {
 
         Button syncButton = new Button("Sync Now");
         syncButton.setStyle("-fx-background-color: #16a34a; -fx-text-fill: white; -fx-font-weight: bold;");
-
-        Label statusLabel = new Label("Ready");
-        statusLabel.setStyle("-fx-text-fill: #4b5563; -fx-font-size: 11px;");
 
         HBox.setHgrow(orderNumberField, Priority.ALWAYS);
         HBox.setHgrow(customerNameField, Priority.ALWAYS);
@@ -142,7 +156,7 @@ public class ClientApp extends Application {
             if (selected != null) {
                 orderDao.markAsDeleted(selected.id());
                 refreshTable();
-                statusLabel.setText("Order marked for deletion (offline).");
+                syncActivityLabel.setText("Order marked for deletion (offline).");
             }
         });
 
@@ -190,40 +204,31 @@ public class ClientApp extends Application {
                 orderNumberField.clear();
                 customerNameField.clear();
                 amountField.clear();
-                statusLabel.setText("Saved locally (offline).");
+                syncActivityLabel.setText("Saved locally (offline).");
             } catch (NumberFormatException ex) {
                 showAlert("Validation Error", "Amount must be a valid number (e.g., 150.50).");
             }
         });
 
-        // Trigger sync action in background
-        syncButton.setOnAction(e -> {
-            syncButton.setDisable(true);
-            statusLabel.setText("Synchronizing with server...");
+        // Manual sync action
+        syncButton.setOnAction(e -> triggerSync(false));
 
-            CompletableFuture.supplyAsync(() -> {
-                try {
-                    return syncCoordinator.performFullSync();
-                } catch (Exception ex) {
-                    throw new RuntimeException(ex);
-                }
-            }).thenAccept(result -> Platform.runLater(() -> {
-                refreshTable();
-                syncButton.setDisable(false);
-                statusLabel.setText(String.format("Sync complete. Pushed: %d, Pulled: %d.",
-                        result.pushedCount(), result.pulledCount()));
-            })).exceptionally(throwable -> {
-                Platform.runLater(() -> {
-                    syncButton.setDisable(false);
-                    statusLabel.setText("Sync failed: " + throwable.getCause().getMessage());
-                    showAlert("Sync Error", "Could not reach server: " + throwable.getCause().getMessage());
-                });
-                return null;
-            });
-        });
+        // Bottom status bar layout (Online/Offline indicator + activity description)
+        connectionStatusLabel.setStyle("-fx-font-weight: bold; -fx-font-size: 11px;");
+        syncActivityLabel.setStyle("-fx-text-fill: #4b5563; -fx-font-size: 11px;");
+
+        HBox networkStatusBox = new HBox(6, connectionDot, connectionStatusLabel);
+        networkStatusBox.setAlignment(Pos.CENTER_LEFT);
+
+        Region spacer = new Region();
+        HBox.setHgrow(spacer, Priority.ALWAYS);
+
+        HBox statusBar = new HBox(12, networkStatusBox, syncActivityLabel, spacer);
+        statusBar.setAlignment(Pos.CENTER_LEFT);
+        statusBar.setPadding(new Insets(4, 2, 4, 2));
 
         // Main layout container
-        VBox root = new VBox(10, formBox, tableView, statusLabel);
+        VBox root = new VBox(10, formBox, tableView, statusBar);
         root.setPadding(new Insets(10));
         VBox.setVgrow(tableView, Priority.ALWAYS);
 
@@ -233,6 +238,68 @@ public class ClientApp extends Application {
 
         // Load persisted orders from the local SQLite database
         refreshTable();
+
+        // Start background auto-sync every 10 seconds (initial delay: 2 seconds)
+        autoSyncScheduler.scheduleWithFixedDelay(() -> triggerSync(true), 2, 10, TimeUnit.SECONDS);
+    }
+
+    private void triggerSync(boolean isBackground) {
+        if (!isSyncing.compareAndSet(false, true)) {
+            return; // Skip cycle if another synchronization is already running
+        }
+
+        if (!isBackground) {
+            syncActivityLabel.setText("Synchronizing with server...");
+        }
+
+        CompletableFuture.supplyAsync(() -> {
+            try {
+                return syncCoordinator.performFullSync();
+            } catch (Exception ex) {
+                throw new RuntimeException(ex);
+            }
+        }).thenAccept(result -> Platform.runLater(() -> {
+            setConnectionState(true);
+            refreshTable();
+            isSyncing.set(false);
+
+            if (result.pushedCount() > 0 || result.pulledCount() > 0 || !isBackground) {
+                syncActivityLabel.setText(String.format("Last sync: %02d:%02d:%02d (Pushed: %d, Pulled: %d)",
+                        LocalTime.now().getHour(),
+                        LocalTime.now().getMinute(),
+                        LocalTime.now().getSecond(),
+                        result.pushedCount(), result.pulledCount()));
+            }
+        })).exceptionally(throwable -> {
+            Platform.runLater(() -> {
+                setConnectionState(false);
+                isSyncing.set(false);
+                syncActivityLabel.setText("Server unreachable. Working in offline mode.");
+
+                if (!isBackground) {
+                    showAlert("Sync Error", "Could not reach server: " + throwable.getCause().getMessage());
+                }
+            });
+            return null;
+        });
+    }
+
+    private void setConnectionState(boolean isOnline) {
+        if (isOnline) {
+            connectionDot.setFill(Color.web("#16a34a"));
+            connectionStatusLabel.setText("Online");
+            connectionStatusLabel.setStyle("-fx-text-fill: #16a34a; -fx-font-weight: bold; -fx-font-size: 11px;");
+        } else {
+            connectionDot.setFill(Color.web("#dc2626"));
+            connectionStatusLabel.setText("Offline");
+            connectionStatusLabel.setStyle("-fx-text-fill: #dc2626; -fx-font-weight: bold; -fx-font-size: 11px;");
+        }
+    }
+
+    @Override
+    public void stop() {
+        // Shutdown background scheduler gracefully on window close
+        autoSyncScheduler.shutdownNow();
     }
 
     private void refreshTable() {
