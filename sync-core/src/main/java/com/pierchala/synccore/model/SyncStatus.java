@@ -4,5 +4,6 @@ public enum SyncStatus {
     SYNCED,
     DIRTY_CREATED,
     DIRTY_UPDATED,
-    DIRTY_DELETED
+    DIRTY_DELETED,
+    CONFLICT
 }

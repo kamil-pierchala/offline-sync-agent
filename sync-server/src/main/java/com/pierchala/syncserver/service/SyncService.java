@@ -12,6 +12,7 @@ import org.springframework.transaction.annotation.Transactional;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Optional;
 
 @Service
 public class SyncService {
@@ -44,18 +45,45 @@ public class SyncService {
                         results.add(new SyncBatchResponse.SyncedItem(dto.id(), 1L, true, null));
                     }
                     case DIRTY_UPDATED -> {
-                        OrderEntity entity = orderRepository.findById(dto.id())
-                                .orElse(new OrderEntity(dto.id(), dto.orderNumber(), dto.customerName(), dto.totalAmount(), dto.status(), Instant.now(), 0L));
+                        Optional<OrderEntity> existingOpt = orderRepository.findById(dto.id());
 
-                        entity.setOrderNumber(dto.orderNumber());
-                        entity.setCustomerName(dto.customerName());
-                        entity.setTotalAmount(dto.totalAmount());
-                        entity.setStatus(dto.status());
-                        entity.setUpdatedAt(Instant.now());
-                        entity.setVersion(entity.getVersion() + 1);
+                        if (existingOpt.isPresent()) {
+                            OrderEntity entity = existingOpt.get();
 
-                        orderRepository.save(entity);
-                        results.add(new SyncBatchResponse.SyncedItem(dto.id(), entity.getVersion(), true, null));
+                            // If server has a newer version than the client -> CONFLICT
+                            if (entity.getVersion() > dto.version()) {
+                                results.add(new SyncBatchResponse.SyncedItem(
+                                        dto.id(),
+                                        entity.getVersion(),
+                                        false,
+                                        "CONFLICT"
+                                ));
+                                continue;
+                            }
+
+                            // When versions match, save changes and increment version
+                            entity.setOrderNumber(dto.orderNumber());
+                            entity.setCustomerName(dto.customerName());
+                            entity.setTotalAmount(dto.totalAmount());
+                            entity.setStatus(dto.status());
+                            entity.setUpdatedAt(Instant.now());
+                            entity.setVersion(entity.getVersion() + 1);
+
+                            orderRepository.save(entity);
+                            results.add(new SyncBatchResponse.SyncedItem(dto.id(), entity.getVersion(), true, null));
+                        } else {
+                            OrderEntity newEntity = new OrderEntity(
+                                    dto.id(),
+                                    dto.orderNumber(),
+                                    dto.customerName(),
+                                    dto.totalAmount(),
+                                    dto.status(),
+                                    Instant.now(),
+                                    1L
+                            );
+                            orderRepository.save(newEntity);
+                            results.add(new SyncBatchResponse.SyncedItem(dto.id(), 1L, true, null));
+                        }
                     }
                     case DIRTY_DELETED -> {
                         orderRepository.deleteById(dto.id());

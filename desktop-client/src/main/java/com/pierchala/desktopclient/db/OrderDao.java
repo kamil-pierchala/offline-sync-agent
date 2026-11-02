@@ -190,7 +190,7 @@ public class OrderDao {
                 updated_at = excluded.updated_at,
                 version = excluded.version,
                 sync_status = 'SYNCED'
-            WHERE orders.sync_status = 'SYNCED' OR excluded.version >= orders.version
+            WHERE orders.sync_status = 'SYNCED'
         """;
         try (Connection conn = DatabaseManager.getConnection();
              PreparedStatement ps = conn.prepareStatement(sql)) {
@@ -215,6 +215,18 @@ public class OrderDao {
             ps.executeUpdate();
         } catch (SQLException e) {
             throw new RuntimeException("Failed to mark order as deleted: " + id, e);
+        }
+    }
+
+    public void markAsConflict(UUID id) {
+        String sql = "UPDATE orders SET sync_status = ? WHERE id = ?";
+        try (Connection conn = DatabaseManager.getConnection();
+             PreparedStatement stmt = conn.prepareStatement(sql)) {
+            stmt.setString(1, SyncStatus.CONFLICT.name());
+            stmt.setString(2, id.toString());
+            stmt.executeUpdate();
+        } catch (SQLException e) {
+            throw new RuntimeException("Failed to mark order as conflict: " + id, e);
         }
     }
 }

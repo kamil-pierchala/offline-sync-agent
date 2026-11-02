@@ -127,6 +127,8 @@ public class ClientApp extends Application {
                         setStyle("-fx-text-fill: #2563eb; -fx-font-weight: bold;");
                     } else if (item == SyncStatus.SYNCED) {
                         setStyle("-fx-text-fill: #16a34a; -fx-font-weight: bold;");
+                    } else if (item == SyncStatus.CONFLICT) {
+                        setStyle("-fx-text-fill: #9333ea; -fx-font-weight: bold;");
                     } else {
                         setStyle("-fx-text-fill: #dc2626; -fx-font-weight: bold;");
                     }

@@ -49,6 +49,9 @@ public class SyncCoordinator {
                         }
                     });
                     pushedCount++;
+                } else if (item.errorMessage() != null && item.errorMessage().contains("CONFLICT")) {
+                    // Mark as conflict when server rejects the update due to version mismatch
+                    orderDao.markAsConflict(item.id());
                 }
             }
         }
