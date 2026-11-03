@@ -143,8 +143,10 @@ public class ClientApp extends Application {
         // Context menu for row editing and deletion
         ContextMenu contextMenu = new ContextMenu();
         MenuItem editItem = new MenuItem("Edit Order");
+        MenuItem resolveItem = new MenuItem("Resolve Conflict");
         MenuItem deleteItem = new MenuItem("Delete Order");
         deleteItem.setStyle("-fx-text-fill: #dc2626;");
+        resolveItem.setStyle("-fx-text-fill: #9333ea; -fx-font-weight: bold;");
 
         editItem.setOnAction(event -> {
             LocalOrder selected = tableView.getSelectionModel().getSelectedItem();
@@ -158,11 +160,30 @@ public class ClientApp extends Application {
             if (selected != null) {
                 orderDao.markAsDeleted(selected.id());
                 refreshTable();
-                syncActivityLabel.setText("Order marked for deletion (offline).");
             }
         });
 
-        contextMenu.getItems().addAll(editItem, deleteItem);
+        resolveItem.setOnAction(event -> {
+            LocalOrder selected = tableView.getSelectionModel().getSelectedItem();
+            if (selected != null && selected.syncStatus() == SyncStatus.CONFLICT) {
+                Alert alert = new Alert(Alert.AlertType.CONFIRMATION, "Choose version to keep:",
+                        new ButtonType("Force My Changes", ButtonBar.ButtonData.OK_DONE),
+                        new ButtonType("Accept Server Data", ButtonBar.ButtonData.CANCEL_CLOSE));
+                alert.setTitle("Resolve Conflict");
+                alert.setHeaderText("Conflict detected for " + selected.orderNumber());
+
+                alert.showAndWait().ifPresent(btn -> {
+                    if (btn.getText().equals("Force My Changes")) {
+                        orderDao.forceLocalUpdate(selected.id());
+                    } else {
+                        orderDao.acceptServerVersion(selected.id());
+                    }
+                    refreshTable();
+                });
+            }
+        });
+
+        contextMenu.getItems().addAll(editItem, resolveItem, deleteItem);
 
         tableView.setRowFactory(tv -> {
             TableRow<LocalOrder> row = new TableRow<>();

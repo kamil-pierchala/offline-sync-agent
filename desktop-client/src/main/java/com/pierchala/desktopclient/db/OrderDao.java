@@ -229,4 +229,24 @@ public class OrderDao {
             throw new RuntimeException("Failed to mark order as conflict: " + id, e);
         }
     }
+
+    public void forceLocalUpdate(UUID id) {
+        // Artificially bumping the version to ensure the server accepts it on the next push
+        String sql = "UPDATE orders SET sync_status = 'DIRTY_UPDATED', version = version + 100 WHERE id = ?";
+        try (Connection conn = DatabaseManager.getConnection();
+             PreparedStatement ps = conn.prepareStatement(sql)) {
+            ps.setString(1, id.toString());
+            ps.executeUpdate();
+        } catch (Exception e) { e.printStackTrace(); }
+    }
+
+    public void acceptServerVersion(UUID id) {
+        // Removal of a local, conflicting record, the application will fetch a clean version from the server during the next pull
+        String sql = "DELETE FROM orders WHERE id = ?";
+        try (Connection conn = DatabaseManager.getConnection();
+             PreparedStatement ps = conn.prepareStatement(sql)) {
+            ps.setString(1, id.toString());
+            ps.executeUpdate();
+        } catch (Exception e) { e.printStackTrace(); }
+    }
 }
