@@ -10,6 +10,27 @@ services:
       - "5433:5432"
     volumes:
       - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U devuser -d syncdb"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  sync-server:
+    build:
+      context: .
+      dockerfile: sync-server/Dockerfile
+    container_name: sync-server-app
+    environment:
+      SPRING_DATASOURCE_URL: jdbc:postgresql://postgres:5432/syncdb
+      SPRING_DATASOURCE_USERNAME: devuser
+      SPRING_DATASOURCE_PASSWORD: devpassword
+      SPRING_JPA_HIBERNATE_DDL_AUTO: update
+    ports:
+      - "8080:8080"
+    depends_on:
+      postgres:
+        condition: service_healthy
 
 volumes:
   pgdata:
