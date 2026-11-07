@@ -185,15 +185,31 @@ public class ClientApp extends Application {
 
         contextMenu.getItems().addAll(editItem, resolveItem, deleteItem);
 
+        // Configure row factory for conflict resolution and context actions
         tableView.setRowFactory(tv -> {
             TableRow<LocalOrder> row = new TableRow<>();
-            row.emptyProperty().addListener((obs, wasEmpty, isEmpty) -> {
-                if (isEmpty) {
-                    row.setContextMenu(null);
-                } else {
-                    row.setContextMenu(contextMenu);
+            ContextMenu rowContextMenu = new ContextMenu();
+
+            MenuItem forceLocalItem = new MenuItem("Resolve - force local version");
+            forceLocalItem.setOnAction(event -> {
+                LocalOrder selected = row.getItem();
+                if (selected != null && selected.syncStatus() == SyncStatus.CONFLICT) {
+                    // Bump local version above server to ensure subsequent push succeeds
+                    orderDao.forceLocalUpdate(selected.id(), selected.version() + 2);
+                    refreshTable();
                 }
             });
+
+            rowContextMenu.getItems().add(forceLocalItem);
+
+            row.itemProperty().addListener((obs, oldVal, newVal) -> {
+                if (newVal != null && newVal.syncStatus() == SyncStatus.CONFLICT) {
+                    row.setContextMenu(rowContextMenu);
+                } else {
+                    row.setContextMenu(null);
+                }
+            });
+
             return row;
         });
 

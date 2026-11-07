@@ -249,4 +249,42 @@ public class OrderDao {
             ps.executeUpdate();
         } catch (Exception e) { e.printStackTrace(); }
     }
+
+    public void acceptServerVersion(UUID id, OrderDto serverOrder) {
+        String sql = """
+        UPDATE orders 
+        SET customer_name = ?, order_number = ?, status = ?, total_amount = ?, version = ?, updated_at = ?, sync_status = 'SYNCED'
+        WHERE id = ?
+    """;
+        try (Connection conn = DatabaseManager.getConnection();
+             PreparedStatement ps = conn.prepareStatement(sql)) {
+            ps.setString(1, serverOrder.customerName());
+            ps.setString(2, serverOrder.orderNumber());
+            ps.setString(3, serverOrder.status());
+            ps.setBigDecimal(4, serverOrder.totalAmount());
+            ps.setLong(5, serverOrder.version());
+            ps.setString(6, serverOrder.updatedAt().toString());
+            ps.setString(7, id.toString());
+            ps.executeUpdate();
+        } catch (SQLException e) {
+            throw new RuntimeException("Failed to accept server version for order: " + id, e);
+        }
+    }
+
+    public void forceLocalUpdate(UUID id, long newVersion) {
+        String sql = """
+        UPDATE orders 
+        SET version = ?, sync_status = 'DIRTY_UPDATED', updated_at = ?
+        WHERE id = ?
+    """;
+        try (Connection conn = DatabaseManager.getConnection();
+             PreparedStatement ps = conn.prepareStatement(sql)) {
+            ps.setLong(1, newVersion);
+            ps.setString(2, Instant.now().toString());
+            ps.setString(3, id.toString());
+            ps.executeUpdate();
+        } catch (SQLException e) {
+            throw new RuntimeException("Failed to force local version for order: " + id, e);
+        }
+    }
 }
