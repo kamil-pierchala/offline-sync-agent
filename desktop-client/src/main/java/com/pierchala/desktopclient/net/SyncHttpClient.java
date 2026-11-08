@@ -17,6 +17,8 @@ import java.time.Instant;
 public class SyncHttpClient {
 
     private static final String SERVER_PUSH_URL = "http://localhost:8080/api/sync/push";
+    private static final String SERVER_PULL_URL = "http://localhost:8080/api/sync/pull";
+
     private final HttpClient httpClient;
     private final ObjectMapper objectMapper;
 
@@ -49,7 +51,7 @@ public class SyncHttpClient {
     }
 
     public SyncPullResponse pullSync(Instant since) throws IOException, InterruptedException {
-        String url = "http://localhost:8080/api/sync/pull";
+        String url = SERVER_PULL_URL;
         if (since != null) {
             url += "?since=" + since.toString();
         }

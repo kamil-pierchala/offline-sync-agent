@@ -141,72 +141,64 @@ public class ClientApp extends Application {
         tableView.setItems(orderList);
 
         // Context menu for row editing and deletion
-        ContextMenu contextMenu = new ContextMenu();
-        MenuItem editItem = new MenuItem("Edit Order");
-        MenuItem resolveItem = new MenuItem("Resolve Conflict");
-        MenuItem deleteItem = new MenuItem("Delete Order");
-        deleteItem.setStyle("-fx-text-fill: #dc2626;");
-        resolveItem.setStyle("-fx-text-fill: #9333ea; -fx-font-weight: bold;");
-
-        editItem.setOnAction(event -> {
-            LocalOrder selected = tableView.getSelectionModel().getSelectedItem();
-            if (selected != null) {
-                showEditDialog(selected);
-            }
-        });
-
-        deleteItem.setOnAction(event -> {
-            LocalOrder selected = tableView.getSelectionModel().getSelectedItem();
-            if (selected != null) {
-                orderDao.markAsDeleted(selected.id());
-                refreshTable();
-            }
-        });
-
-        resolveItem.setOnAction(event -> {
-            LocalOrder selected = tableView.getSelectionModel().getSelectedItem();
-            if (selected != null && selected.syncStatus() == SyncStatus.CONFLICT) {
-                Alert alert = new Alert(Alert.AlertType.CONFIRMATION, "Choose version to keep:",
-                        new ButtonType("Force My Changes", ButtonBar.ButtonData.OK_DONE),
-                        new ButtonType("Accept Server Data", ButtonBar.ButtonData.CANCEL_CLOSE));
-                alert.setTitle("Resolve Conflict");
-                alert.setHeaderText("Conflict detected for " + selected.orderNumber());
-
-                alert.showAndWait().ifPresent(btn -> {
-                    if (btn.getText().equals("Force My Changes")) {
-                        orderDao.forceLocalUpdate(selected.id());
-                    } else {
-                        orderDao.acceptServerVersion(selected.id());
-                    }
-                    refreshTable();
-                });
-            }
-        });
-
-        contextMenu.getItems().addAll(editItem, resolveItem, deleteItem);
-
-        // Configure row factory for conflict resolution and context actions
         tableView.setRowFactory(tv -> {
             TableRow<LocalOrder> row = new TableRow<>();
-            ContextMenu rowContextMenu = new ContextMenu();
+            ContextMenu menu = new ContextMenu();
+
+            MenuItem editItem = new MenuItem("Edit Order");
+            MenuItem deleteItem = new MenuItem("Delete Order");
+            deleteItem.setStyle("-fx-text-fill: #dc2626;");
 
             MenuItem forceLocalItem = new MenuItem("Resolve - force local version");
+            MenuItem discardLocalItem = new MenuItem("Resolve - discard local version");
+            forceLocalItem.setStyle("-fx-text-fill: #9333ea; -fx-font-weight: bold;");
+            discardLocalItem.setStyle("-fx-text-fill: #9333ea; -fx-font-weight: bold;");
+
+            editItem.setOnAction(event -> {
+                LocalOrder selected = row.getItem();
+                if (selected != null) {
+                    showEditDialog(selected);
+                }
+            });
+
+            deleteItem.setOnAction(event -> {
+                LocalOrder selected = row.getItem();
+                if (selected != null) {
+                    orderDao.markAsDeleted(selected.id());
+                    refreshTable();
+                }
+            });
+
             forceLocalItem.setOnAction(event -> {
                 LocalOrder selected = row.getItem();
                 if (selected != null && selected.syncStatus() == SyncStatus.CONFLICT) {
-                    // Bump local version above server to ensure subsequent push succeeds
                     orderDao.forceLocalUpdate(selected.id(), selected.version() + 2);
                     refreshTable();
                 }
             });
 
-            rowContextMenu.getItems().add(forceLocalItem);
+            discardLocalItem.setOnAction(event -> {
+                LocalOrder selected = row.getItem();
+                if (selected != null && selected.syncStatus() == SyncStatus.CONFLICT) {
+                    orderDao.markForServerOverwrite(selected.id());
+                    refreshTable();
+                    triggerSync(false);
+                }
+            });
 
-            row.itemProperty().addListener((obs, oldVal, newVal) -> {
-                if (newVal != null && newVal.syncStatus() == SyncStatus.CONFLICT) {
-                    row.setContextMenu(rowContextMenu);
-                } else {
-                    row.setContextMenu(null);
+            menu.getItems().addAll(editItem, deleteItem, new SeparatorMenuItem(), forceLocalItem, discardLocalItem);
+
+            // Dynamically show conflict resolution options only when the row is in CONFLICT status
+            menu.setOnShowing(e -> {
+                LocalOrder selected = row.getItem();
+                boolean isConflict = selected != null && selected.syncStatus() == SyncStatus.CONFLICT;
+                forceLocalItem.setVisible(isConflict);
+                discardLocalItem.setVisible(isConflict);
+            });
+
+            row.setOnContextMenuRequested(e -> {
+                if (!row.isEmpty()) {
+                    menu.show(row, e.getScreenX(), e.getScreenY());
                 }
             });
 

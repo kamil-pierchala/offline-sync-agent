@@ -287,4 +287,15 @@ public class OrderDao {
             throw new RuntimeException("Failed to force local version for order: " + id, e);
         }
     }
+
+    public void markForServerOverwrite(UUID id) {
+        String sql = "UPDATE orders SET sync_status = 'SYNCED', version = 0 WHERE id = ?";
+        try (Connection conn = DatabaseManager.getConnection();
+             PreparedStatement ps = conn.prepareStatement(sql)) {
+            ps.setString(1, id.toString());
+            ps.executeUpdate();
+        } catch (SQLException e) {
+            throw new RuntimeException("Failed to mark order for server overwrite: " + id, e);
+        }
+    }
 }
