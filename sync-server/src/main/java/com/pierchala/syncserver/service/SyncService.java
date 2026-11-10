@@ -6,6 +6,8 @@ import com.pierchala.synccore.model.SyncBatchResponse;
 import com.pierchala.synccore.model.SyncPullResponse;
 import com.pierchala.syncserver.entity.OrderEntity;
 import com.pierchala.syncserver.repository.OrderRepository;
+import com.pierchala.synccore.model.OrderItemDto;
+import com.pierchala.syncserver.entity.OrderItemEntity;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -41,6 +43,18 @@ public class SyncService {
                                 Instant.now(),
                                 1L
                         );
+                        // Add items if provided
+                        if (dto.items() != null) {
+                            for (OrderItemDto itemDto : dto.items()) {
+                                entity.addItem(new OrderItemEntity(
+                                        itemDto.id(),
+                                        itemDto.productName(),
+                                        itemDto.quantity(),
+                                        itemDto.unitPrice(),
+                                        entity
+                                ));
+                            }
+                        }
                         orderRepository.save(entity);
                         results.add(new SyncBatchResponse.SyncedItem(dto.id(), 1L, true, null));
                     }
@@ -69,6 +83,20 @@ public class SyncService {
                             entity.setUpdatedAt(Instant.now());
                             entity.setVersion(entity.getVersion() + 1);
 
+                            // Update order items
+                            entity.clearItems();
+                                if (dto.items() != null) {
+                                    for (OrderItemDto itemDto : dto.items()) {
+                                        entity.addItem(new OrderItemEntity(
+                                                itemDto.id(),
+                                                itemDto.productName(),
+                                                itemDto.quantity(),
+                                                itemDto.unitPrice(),
+                                                entity
+                                        ));
+                                    }
+                                }
+
                             orderRepository.save(entity);
                             results.add(new SyncBatchResponse.SyncedItem(dto.id(), entity.getVersion(), true, null));
                         } else {
@@ -81,6 +109,17 @@ public class SyncService {
                                     Instant.now(),
                                     1L
                             );
+                            if (dto.items() != null) {
+                                for (OrderItemDto itemDto: dto.items()) {
+                                    newEntity.addItem(new OrderItemEntity(
+                                            itemDto.id(),
+                                            itemDto.productName(),
+                                            itemDto.quantity(),
+                                            itemDto.unitPrice(),
+                                            newEntity
+                                    ));
+                                }
+                            }
                             orderRepository.save(newEntity);
                             results.add(new SyncBatchResponse.SyncedItem(dto.id(), 1L, true, null));
                         }
@@ -105,15 +144,27 @@ public class SyncService {
 
         List<OrderDto> dtos = orderRepository.findByUpdatedAtAfterOrderByUpdatedAtAsc(querySince)
                 .stream()
-                .map(entity -> new OrderDto(
-                        entity.getId(),
-                        entity.getOrderNumber(),
-                        entity.getCustomerName(),
-                        entity.getTotalAmount(),
-                        entity.getStatus(),
-                        entity.getUpdatedAt(),
-                        entity.getVersion()
-                ))
+                .map(entity -> {
+                    List<OrderItemDto> itemDtos = entity.getItems().stream()
+                            .map(item -> new OrderItemDto(
+                                    item.getId(),
+                                    item.getProductName(),
+                                    item.getQuantity(),
+                                    item.getUnitPrice()
+                            ))
+                            .toList();
+
+                    return new OrderDto(
+                            entity.getId(),
+                            entity.getOrderNumber(),
+                            entity.getCustomerName(),
+                            entity.getTotalAmount(),
+                            entity.getStatus(),
+                            entity.getUpdatedAt(),
+                            entity.getVersion(),
+                            itemDtos
+                    );
+                })
                 .toList();
 
         return new SyncPullResponse(dtos, fetchTime);

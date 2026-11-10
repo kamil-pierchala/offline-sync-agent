@@ -1,12 +1,11 @@
 package com.pierchala.syncserver.entity;
 
-import jakarta.persistence.Column;
-import jakarta.persistence.Entity;
-import jakarta.persistence.Id;
-import jakarta.persistence.Table;
+import jakarta.persistence.*;
 
 import java.math.BigDecimal;
 import java.time.Instant;
+import java.util.ArrayList;
+import java.util.List;
 import java.util.UUID;
 
 @Entity
@@ -34,6 +33,9 @@ public class OrderEntity {
     @Column(nullable = false)
     private Long version;
 
+    @OneToMany(mappedBy = "order", cascade = CascadeType.ALL, orphanRemoval = true)
+    private List<OrderItemEntity> items = new ArrayList<>();
+
     public OrderEntity() {
     }
 
@@ -45,6 +47,23 @@ public class OrderEntity {
         this.status = status;
         this.updatedAt = updatedAt;
         this.version = version;
+    }
+
+    public void addItem(OrderItemEntity item) {
+        items.add(item);
+        item.setOrder(this);
+    }
+
+    public void clearItems() {
+        items.clear();
+    }
+
+    public List<OrderItemEntity> getItems() {
+        return items;
+    }
+
+    public void setItems(List<OrderItemEntity> items) {
+        this.items = items;
     }
 
     public UUID getId() { return id; }
