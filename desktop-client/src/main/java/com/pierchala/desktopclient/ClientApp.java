@@ -5,6 +5,7 @@ import com.pierchala.desktopclient.db.OrderDao;
 import com.pierchala.desktopclient.model.LocalOrder;
 import com.pierchala.desktopclient.net.SyncHttpClient;
 import com.pierchala.desktopclient.sync.SyncCoordinator;
+import com.pierchala.synccore.model.OrderItemDto;
 import com.pierchala.synccore.model.SyncStatus;
 import javafx.application.Application;
 import javafx.application.Platform;
@@ -39,7 +40,9 @@ public class ClientApp extends Application {
     private final OrderDao orderDao = new OrderDao();
     private final SyncCoordinator syncCoordinator = new SyncCoordinator(orderDao, new SyncHttpClient());
     private final ObservableList<LocalOrder> orderList = FXCollections.observableArrayList();
+    private final ObservableList<OrderItemDto> selectedOrderItemsList = FXCollections.observableArrayList();
     private TableView<LocalOrder> tableView;
+    private TableView<OrderItemDto> itemsTableView;
 
     // Background auto-sync scheduler and concurrency control
     private final ScheduledExecutorService autoSyncScheduler = Executors.newSingleThreadScheduledExecutor();
@@ -139,6 +142,108 @@ public class ClientApp extends Application {
         // Add columns exactly once
         tableView.getColumns().addAll(colNumber, colCustomer, colAmount, colStatus, colSync);
         tableView.setItems(orderList);
+
+        // Update detail items table when order selection changes
+        Label selectedOrderLabel = new Label("Order items (Select an order above to view or add items):");
+        selectedOrderLabel.setStyle("-fx-font-weight: bold; -fx-text-fill: #374151;");
+
+        tableView.getSelectionModel().selectedItemProperty().addListener((obs, oldSelection, newSelection) -> {
+            if (newSelection != null) {
+                selectedOrderLabel.setText("Order items for " + newSelection.orderNumber() + ":");
+                selectedOrderItemsList.setAll(newSelection.items());
+            } else {
+                selectedOrderLabel.setText("Order Items (Select an order above to view or add items):");
+                selectedOrderItemsList.clear();
+            }
+        });
+
+        // Order items detail table view
+        itemsTableView = new TableView<>();
+        itemsTableView.setColumnResizePolicy(TableView.CONSTRAINED_RESIZE_POLICY);
+        itemsTableView.setPrefHeight(150);
+
+        TableColumn<OrderItemDto, String> colProduct = new TableColumn<>("Product name");
+        colProduct.setCellValueFactory(cellData ->
+                new SimpleStringProperty(cellData.getValue().productName()));
+
+        TableColumn<OrderItemDto, Integer> colQty = new TableColumn<>("Quantity");
+        colQty.setCellValueFactory(cellData ->
+                new SimpleObjectProperty<>(cellData.getValue().quantity()));
+
+        TableColumn<OrderItemDto, BigDecimal> colUnitPrice = new TableColumn<>("Unit price");
+        colUnitPrice.setCellValueFactory(cellData ->
+                new SimpleObjectProperty<>(cellData.getValue().unitPrice()));
+
+        TableColumn<OrderItemDto, BigDecimal> colLineTotal = new TableColumn<>("Line total");
+        colLineTotal.setCellValueFactory(cellData ->
+                new SimpleObjectProperty<>(cellData.getValue().calculateLineTotal()));
+
+        itemsTableView.getColumns().addAll(colProduct, colQty, colUnitPrice, colLineTotal);
+        itemsTableView.setItems(selectedOrderItemsList);
+
+        // Form for adding line items to selected order
+        TextField productField = new TextField();
+        productField.setPromptText("Product name (e.g., Laptop)");
+
+        TextField qtyField = new TextField();
+        qtyField.setPromptText("Quantity");
+        qtyField.setPrefWidth(70);
+
+        TextField unitPriceField = new TextField();
+        unitPriceField.setPromptText("Unit price");
+        unitPriceField.setPrefWidth(110);
+
+        Button addItemButton = new Button("Add item to selected order");
+        addItemButton.setStyle("-fx-background-color: #4f46e5; -fx-text-fill: white; -fx-font-weight: bold;");
+
+        HBox.setHgrow(productField, Priority.ALWAYS);
+        HBox itemFormBox = new HBox(10, productField, qtyField, unitPriceField, addItemButton);
+        itemFormBox.setAlignment(Pos.CENTER_LEFT);
+
+        addItemButton.setOnAction(e -> {
+            LocalOrder selectedOrder = tableView.getSelectionModel().getSelectedItem();
+            if (selectedOrder == null) {
+                showAlert("Selection required", "Please select an order from the top table first.");
+                return;
+            }
+
+            String prod = productField.getText().trim();
+            String qtyStr = qtyField.getText().trim();
+            String priceStr = unitPriceField.getText().trim();
+
+            if (prod.isEmpty() || qtyStr.isEmpty() || priceStr.isEmpty()) {
+                showAlert("Form error", "All item fields are required.");
+                return;
+            }
+
+            try {
+                int qty = Integer.parseInt(qtyStr);
+                BigDecimal unitPrice = new BigDecimal(priceStr);
+                if (qty <= 0 || unitPrice.compareTo(BigDecimal.ZERO) < 0) {
+                    showAlert("Validation error", "Quantity must be positive and price cannot be negative.");
+                    return;
+                }
+
+                OrderItemDto newItem = new OrderItemDto(UUID.randomUUID(), prod, qty, unitPrice);
+                orderDao.addItemToOrder(selectedOrder.id(), newItem);
+
+                productField.clear();
+                qtyField.clear();
+                unitPriceField.clear();
+
+                UUID selectedId = selectedOrder.id();
+                refreshTable();
+                // Restore selection to show updated items immediately
+                orderList.stream()
+                        .filter(o -> o.id().equals(selectedId))
+                        .findFirst()
+                        .ifPresent(o -> tableView.getSelectionModel().select(o));
+
+                syncActivityLabel.setText("Item added locally (offline).");
+            } catch (NumberFormatException ex) {
+                showAlert("Validation error", "Quantity must be an integer and unit price must be a valid number.");
+            }
+        });
 
         // Context menu for row editing and deletion
         tableView.setRowFactory(tv -> {
@@ -259,11 +364,11 @@ public class ClientApp extends Application {
         statusBar.setPadding(new Insets(4, 2, 4, 2));
 
         // Main layout container
-        VBox root = new VBox(10, formBox, tableView, statusBar);
+        VBox root = new VBox(10, formBox, tableView, selectedOrderLabel, itemFormBox, itemsTableView, statusBar);
         root.setPadding(new Insets(10));
         VBox.setVgrow(tableView, Priority.ALWAYS);
 
-        Scene scene = new Scene(root, 880, 520);
+        Scene scene = new Scene(root, 920, 680);
         stage.setScene(scene);
         stage.show();
 
@@ -291,7 +396,14 @@ public class ClientApp extends Application {
             }
         }).thenAccept(result -> Platform.runLater(() -> {
             setConnectionState(true);
+            LocalOrder previousSelection = tableView.getSelectionModel().getSelectedItem();
             refreshTable();
+            if (previousSelection != null) {
+                orderList.stream()
+                        .filter(o -> o.id().equals(previousSelection.id()))
+                        .findFirst()
+                        .ifPresent(o -> tableView.getSelectionModel().select(o));
+            }
             isSyncing.set(false);
 
             if (result.pushedCount() > 0 || result.pulledCount() > 0 || !isBackground) {

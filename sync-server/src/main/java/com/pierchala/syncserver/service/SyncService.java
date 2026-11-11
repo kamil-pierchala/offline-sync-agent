@@ -138,6 +138,7 @@ public class SyncService {
         return new SyncBatchResponse(results);
     }
 
+    @Transactional(readOnly = true)
     public SyncPullResponse fetchUpdatesSince(Instant since) {
         Instant fetchTime = Instant.now();
         Instant querySince = (since != null) ? since : Instant.EPOCH;

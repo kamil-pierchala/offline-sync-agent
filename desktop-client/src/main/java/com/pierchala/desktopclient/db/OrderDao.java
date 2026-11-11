@@ -2,6 +2,7 @@ package com.pierchala.desktopclient.db;
 
 import com.pierchala.desktopclient.model.LocalOrder;
 import com.pierchala.synccore.model.OrderDto;
+import com.pierchala.synccore.model.OrderItemDto;
 import com.pierchala.synccore.model.SyncStatus;
 
 import java.math.BigDecimal;
@@ -20,10 +21,17 @@ public class OrderDao {
             VALUES (?, ?, ?, ?, ?, ?, ?, ?)
             """;
 
-        try (Connection conn = DatabaseManager.getConnection();
-             PreparedStatement ps = conn.prepareStatement(sql)) {
-            setStatementParams(ps, order);
-            ps.executeUpdate();
+        try (Connection conn = DatabaseManager.getConnection()) {
+            conn.setAutoCommit(false);
+            try (PreparedStatement ps = conn.prepareStatement(sql)) {
+                setStatementParams(ps, order);
+                ps.executeUpdate();
+                insertItems(conn, order.id(), order.items());
+                conn.commit();
+            } catch (SQLException e) {
+                conn.rollback();
+                throw e;
+            }
         } catch (SQLException e) {
             throw new RuntimeException("Failed to insert order: " + order.id(), e);
         }
@@ -79,7 +87,7 @@ public class OrderDao {
             ps.setString(1, id.toString());
             try (ResultSet rs = ps.executeQuery()) {
                 if (rs.next()) {
-                    return Optional.of(mapRow(rs));
+                    return Optional.of(mapRow(rs, conn));
                 }
             }
         } catch (SQLException e) {
@@ -117,7 +125,7 @@ public class OrderDao {
              PreparedStatement ps = conn.prepareStatement(sql);
              ResultSet rs = ps.executeQuery()) {
             while (rs.next()) {
-                orders.add(mapRow(rs));
+                orders.add(mapRow(rs, conn));
             }
         } catch (SQLException e) {
             throw new RuntimeException("Failed to query orders", e);
@@ -125,17 +133,61 @@ public class OrderDao {
         return orders;
     }
 
-    private LocalOrder mapRow(ResultSet rs) throws SQLException {
+    private LocalOrder mapRow(ResultSet rs, Connection conn) throws SQLException {
+        UUID orderId = UUID.fromString(rs.getString("id"));
+        List<OrderItemDto> items = findItemsByOrderId(conn, orderId);
+
         return new LocalOrder(
-                UUID.fromString(rs.getString("id")),
+                orderId,
                 rs.getString("order_number"),
                 rs.getString("customer_name"),
                 rs.getBigDecimal("total_amount"),
                 rs.getString("status"),
                 Instant.parse(rs.getString("updated_at")),
                 rs.getLong("version"),
-                SyncStatus.valueOf(rs.getString("sync_status"))
+                SyncStatus.valueOf(rs.getString("sync_status")),
+                items
         );
+    }
+
+    private void insertItems(Connection conn, UUID orderId, List<OrderItemDto> items) throws SQLException {
+        if (items == null || items.isEmpty()) {
+            return;
+        }
+        String sql = """
+            INSERT INTO order_items (id, order_id, product_name, quantity, unit_price)
+            VALUES (?, ?, ?, ?, ?)
+            """;
+        try (PreparedStatement ps = conn.prepareStatement(sql)) {
+            for (OrderItemDto item : items) {
+                ps.setString(1, item.id().toString());
+                ps.setString(2, orderId.toString());
+                ps.setString(3, item.productName());
+                ps.setInt(4, item.quantity());
+                ps.setBigDecimal(5, item.unitPrice());
+                ps.addBatch();
+            }
+            ps.executeBatch();
+        }
+    }
+
+    private List<OrderItemDto> findItemsByOrderId(Connection conn, UUID orderId) throws SQLException {
+        List<OrderItemDto> items = new ArrayList<>();
+        String sql = "SELECT id, product_name, quantity, unit_price FROM order_items WHERE order_id = ?";
+        try (PreparedStatement ps = conn.prepareStatement(sql)) {
+            ps.setString(1, orderId.toString());
+            try (ResultSet rs = ps.executeQuery()) {
+                while (rs.next()) {
+                    items.add(new OrderItemDto(
+                            UUID.fromString(rs.getString("id")),
+                            rs.getString("product_name"),
+                            rs.getInt("quantity"),
+                            rs.getBigDecimal("unit_price")
+                    ));
+                }
+            }
+        }
+        return items;
     }
 
     private void setStatementParams(PreparedStatement ps, LocalOrder order) throws SQLException {
@@ -192,16 +244,33 @@ public class OrderDao {
                 sync_status = 'SYNCED'
             WHERE orders.sync_status = 'SYNCED'
         """;
-        try (Connection conn = DatabaseManager.getConnection();
-             PreparedStatement ps = conn.prepareStatement(sql)) {
-            ps.setString(1, dto.id().toString());
-            ps.setString(2, dto.orderNumber());
-            ps.setString(3, dto.customerName());
-            ps.setBigDecimal(4, dto.totalAmount());
-            ps.setString(5, dto.status());
-            ps.setString(6, dto.updatedAt().toString());
-            ps.setLong(7, dto.version());
-            ps.executeUpdate();
+        String deleteItemsSql = "DELETE FROM order_items WHERE order_id = ?";
+
+        try (Connection conn = DatabaseManager.getConnection()) {
+            conn.setAutoCommit(false);
+            try (PreparedStatement ps = conn.prepareStatement(sql)) {
+                ps.setString(1, dto.id().toString());
+                ps.setString(2, dto.orderNumber());
+                ps.setString(3, dto.customerName());
+                ps.setBigDecimal(4, dto.totalAmount());
+                ps.setString(5, dto.status());
+                ps.setString(6, dto.updatedAt().toString());
+                ps.setLong(7, dto.version());
+                int affectedRows = ps.executeUpdate();
+
+                // Update child line items only if the parent order was inserted or updated
+                if (affectedRows > 0) {
+                    try (PreparedStatement deletePs = conn.prepareStatement(deleteItemsSql)) {
+                        deletePs.setString(1, dto.id().toString());
+                        deletePs.executeUpdate();
+                    }
+                    insertItems(conn, dto.id(), dto.items());
+                }
+                conn.commit();
+            } catch (SQLException e) {
+                conn.rollback();
+                throw e;
+            }
         } catch (SQLException e) {
             e.printStackTrace();
         }
@@ -296,6 +365,64 @@ public class OrderDao {
             ps.executeUpdate();
         } catch (SQLException e) {
             throw new RuntimeException("Failed to mark order for server overwrite: " + id, e);
+        }
+    }
+
+    public void addItemToOrder(UUID orderId, OrderItemDto newItem) {
+        String insertItemSql = """
+            INSERT INTO order_items (id, order_id, product_name, quantity, unit_price)
+            VALUES (?, ?, ?, ?, ?)
+            """;
+        String selectOrderSql = "SELECT total_amount, sync_status FROM orders WHERE id = ?";
+        String updateOrderSql = "UPDATE orders SET total_amount = ?, updated_at = ?, sync_status = ? WHERE id = ?";
+
+        try (Connection conn = DatabaseManager.getConnection()) {
+            conn.setAutoCommit(false);
+            try {
+                // Insert new line item
+                try (PreparedStatement insertPs = conn.prepareStatement(insertItemSql)) {
+                    insertPs.setString(1, newItem.id().toString());
+                    insertPs.setString(2, orderId.toString());
+                    insertPs.setString(3, newItem.productName());
+                    insertPs.setInt(4, newItem.quantity());
+                    insertPs.setBigDecimal(5, newItem.unitPrice());
+                    insertPs.executeUpdate();
+                }
+
+                // Recalculate order total and preserve DIRTY_CREATED if not synced yet
+                BigDecimal currentTotal = BigDecimal.ZERO;
+                SyncStatus nextStatus = SyncStatus.DIRTY_UPDATED;
+
+                try (PreparedStatement selectPs = conn.prepareStatement(selectOrderSql)) {
+                    selectPs.setString(1, orderId.toString());
+                    try (ResultSet rs = selectPs.executeQuery()) {
+                        if (rs.next()) {
+                            currentTotal = rs.getBigDecimal("total_amount");
+                            SyncStatus existingStatus = SyncStatus.valueOf(rs.getString("sync_status"));
+                            if (existingStatus == SyncStatus.DIRTY_CREATED) {
+                                nextStatus = SyncStatus.DIRTY_CREATED;
+                            }
+                        }
+                    }
+                }
+
+                BigDecimal updatedTotal = currentTotal.add(newItem.calculateLineTotal());
+
+                try (PreparedStatement updatePs = conn.prepareStatement(updateOrderSql)) {
+                    updatePs.setBigDecimal(1, updatedTotal);
+                    updatePs.setString(2, Instant.now().toString());
+                    updatePs.setString(3, nextStatus.name());
+                    updatePs.setString(4, orderId.toString());
+                    updatePs.executeUpdate();
+                }
+
+                conn.commit();
+            } catch (SQLException e) {
+                conn.rollback();
+                throw e;
+            }
+        } catch (SQLException e) {
+            throw new RuntimeException("Failed to add item to order: " + orderId, e);
         }
     }
 }
