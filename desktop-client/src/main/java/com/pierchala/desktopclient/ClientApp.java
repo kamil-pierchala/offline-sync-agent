@@ -181,6 +181,37 @@ public class ClientApp extends Application {
         itemsTableView.getColumns().addAll(colProduct, colQty, colUnitPrice, colLineTotal);
         itemsTableView.setItems(selectedOrderItemsList);
 
+        // Context menu for deleting line items
+        itemsTableView.setRowFactory(tv -> {
+            TableRow<OrderItemDto> row = new TableRow<>();
+            ContextMenu itemMenu = new ContextMenu();
+            MenuItem deleteLineItem = new MenuItem("Delete item");
+            deleteLineItem.setStyle("-fx-text-fill: #dc2626;");
+
+            deleteLineItem.setOnAction(event -> {
+                OrderItemDto selectedItem = row.getItem();
+                LocalOrder selectedOrder = tableView.getSelectionModel().getSelectedItem();
+                if (selectedItem != null && selectedOrder != null) {
+                    orderDao.removeItemFromOrder(selectedOrder.id(), selectedItem);
+                    UUID orderId = selectedOrder.id();
+                    refreshTable();
+                    orderList.stream()
+                            .filter(o -> o.id().equals(orderId))
+                            .findFirst()
+                            .ifPresent(o -> tableView.getSelectionModel().select(o));
+                    syncActivityLabel.setText("Item removed locally (offline).");
+                }
+            });
+
+            itemMenu.getItems().add(deleteLineItem);
+            row.setOnContextMenuRequested(event -> {
+                if (!row.isEmpty()) {
+                    itemMenu.show(row, event.getScreenX(), event.getScreenY());
+                }
+            });
+            return row;
+        });
+
         // Form for adding line items to selected order
         TextField productField = new TextField();
         productField.setPromptText("Product name (e.g., Laptop)");

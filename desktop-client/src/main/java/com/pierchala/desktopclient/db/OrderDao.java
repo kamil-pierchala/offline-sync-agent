@@ -425,4 +425,54 @@ public class OrderDao {
             throw new RuntimeException("Failed to add item to order: " + orderId, e);
         }
     }
+
+    public void removeItemFromOrder(UUID orderId, OrderItemDto itemToRemove) {
+        String deleteItemSql = "DELETE FROM order_items WHERE id = ? AND order_id = ?";
+        String selectOrderSql = "SELECT total_amount, sync_status FROM orders WHERE id = ?";
+        String updateOrderSql = "UPDATE orders SET total_amount = ?, updated_at = ?, sync_status = ? WHERE id = ?";
+
+        try (Connection conn = DatabaseManager.getConnection()) {
+            conn.setAutoCommit(false);
+            try {
+                try (PreparedStatement deletePs = conn.prepareStatement(deleteItemSql)) {
+                    deletePs.setString(1, itemToRemove.id().toString());
+                    deletePs.setString(2, orderId.toString());
+                    deletePs.executeUpdate();
+                }
+
+                BigDecimal currentTotal = BigDecimal.ZERO;
+                SyncStatus nextStatus = SyncStatus.DIRTY_UPDATED;
+
+                try (PreparedStatement selectPs = conn.prepareStatement(selectOrderSql)) {
+                    selectPs.setString(1, orderId.toString());
+                    try (ResultSet rs = selectPs.executeQuery()) {
+                        if (rs.next()) {
+                            currentTotal = rs.getBigDecimal("total_amount");
+                            SyncStatus existingStatus = SyncStatus.valueOf(rs.getString("sync_status"));
+                            if (existingStatus == SyncStatus.DIRTY_CREATED) {
+                                nextStatus = SyncStatus.DIRTY_CREATED;
+                            }
+                        }
+                    }
+                }
+
+                BigDecimal updatedTotal = currentTotal.subtract(itemToRemove.calculateLineTotal()).max(BigDecimal.ZERO);
+
+                try (PreparedStatement updatePs = conn.prepareStatement(updateOrderSql)) {
+                    updatePs.setBigDecimal(1, updatedTotal);
+                    updatePs.setString(2, Instant.now().toString());
+                    updatePs.setString(3, nextStatus.name());
+                    updatePs.setString(4, orderId.toString());
+                    updatePs.executeUpdate();
+                }
+
+                conn.commit();
+            } catch (SQLException e) {
+                conn.rollback();
+                throw e;
+            }
+        } catch (SQLException e) {
+            throw new RuntimeException("Failed to remove item from order: " + orderId, e);
+        }
+    }
 }
