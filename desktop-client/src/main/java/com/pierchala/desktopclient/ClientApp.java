@@ -24,6 +24,8 @@ import javafx.scene.layout.VBox;
 import javafx.scene.paint.Color;
 import javafx.scene.shape.Circle;
 import javafx.stage.Stage;
+import javafx.collections.transformation.FilteredList;
+import javafx.collections.transformation.SortedList;
 
 import java.math.BigDecimal;
 import java.time.Instant;
@@ -90,6 +92,28 @@ public class ClientApp extends Application {
         formBox.setPadding(new Insets(10));
         formBox.setAlignment(Pos.CENTER_LEFT);
 
+        // Search and filter bar
+        TextField searchField = new TextField();
+        searchField.setPromptText("Search by order number or customer...");
+        searchField.setPrefWidth(280);
+
+        ComboBox<String> syncFilterBox = new ComboBox<>();
+        syncFilterBox.getItems().addAll("ALL", "SYNCED", "DIRTY_CREATED", "DIRTY_UPDATED", "CONFLICT");
+        syncFilterBox.setValue("ALL");
+
+        Button clearFilterButton = new Button("Clear filters");
+
+        Label summaryLabel = new Label("Visible orders: 0 | Total: 0.00");
+        summaryLabel.setStyle("-fx-font-weight: bold; -fx-text-fill: #1f2937;");
+
+        Region filterSpacer = new Region();
+        HBox.setHgrow(filterSpacer, Priority.ALWAYS);
+
+        HBox filterBox = new HBox(10, new Label("Filter:"), searchField, syncFilterBox, clearFilterButton, filterSpacer, summaryLabel);
+        filterBox.setPadding(new Insets(4, 10, 4, 10));
+        filterBox.setAlignment(Pos.CENTER_LEFT);
+        filterBox.setStyle("-fx-background-color: #f3f4f6; -fx-background-radius: 6;");
+
         // Orders table view
         tableView = new TableView<>();
         tableView.setColumnResizePolicy(TableView.CONSTRAINED_RESIZE_POLICY);
@@ -141,7 +165,45 @@ public class ClientApp extends Application {
 
         // Add columns exactly once
         tableView.getColumns().addAll(colNumber, colCustomer, colAmount, colStatus, colSync);
-        tableView.setItems(orderList);
+
+        // Wrap orderList in FilteredList and SortedList for real-time search and sorting
+        FilteredList<LocalOrder> filteredOrders = new FilteredList<>(orderList, p -> true);
+
+        Runnable updateFilterAndSummary = () -> {
+            String query = searchField.getText() == null ? "" : searchField.getText().trim().toLowerCase();
+            String selectedSyncStatus = syncFilterBox.getValue();
+
+            filteredOrders.setPredicate(order -> {
+                boolean matchesStatus = "ALL".equals(selectedSyncStatus)
+                        || order.syncStatus().name().equals(selectedSyncStatus);
+
+                boolean matchesQuery = query.isEmpty()
+                        || order.orderNumber().toLowerCase().contains(query)
+                        || order.customerName().toLowerCase().contains(query);
+
+                return matchesStatus && matchesQuery;
+            });
+
+            BigDecimal visibleTotal = filteredOrders.stream()
+                    .map(LocalOrder::totalAmount)
+                    .reduce(BigDecimal.ZERO, BigDecimal::add);
+
+            summaryLabel.setText(String.format("Visible Orders: %d | Total: %s",
+                    filteredOrders.size(), visibleTotal.toPlainString()));
+        };
+
+        searchField.textProperty().addListener((obs, oldVal, newVal) -> updateFilterAndSummary.run());
+        syncFilterBox.valueProperty().addListener((obs, oldVal, newVal) -> updateFilterAndSummary.run());
+        orderList.addListener((javafx.collections.ListChangeListener<LocalOrder>) c -> updateFilterAndSummary.run());
+
+        clearFilterButton.setOnAction(e -> {
+            searchField.clear();
+            syncFilterBox.setValue("ALL");
+        });
+
+        SortedList<LocalOrder> sortedOrders = new SortedList<>(filteredOrders);
+        sortedOrders.comparatorProperty().bind(tableView.comparatorProperty());
+        tableView.setItems(sortedOrders);
 
         // Update detail items table when order selection changes
         Label selectedOrderLabel = new Label("Order items (Select an order above to view or add items):");
@@ -395,7 +457,7 @@ public class ClientApp extends Application {
         statusBar.setPadding(new Insets(4, 2, 4, 2));
 
         // Main layout container
-        VBox root = new VBox(10, formBox, tableView, selectedOrderLabel, itemFormBox, itemsTableView, statusBar);
+        VBox root = new VBox(10, formBox, filterBox, tableView, selectedOrderLabel, itemFormBox, itemsTableView, statusBar);
         root.setPadding(new Insets(10));
         VBox.setVgrow(tableView, Priority.ALWAYS);
 
