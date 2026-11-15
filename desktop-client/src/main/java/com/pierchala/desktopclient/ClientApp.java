@@ -247,8 +247,17 @@ public class ClientApp extends Application {
         itemsTableView.setRowFactory(tv -> {
             TableRow<OrderItemDto> row = new TableRow<>();
             ContextMenu itemMenu = new ContextMenu();
+            MenuItem editLineItem = new MenuItem("Edit item");
             MenuItem deleteLineItem = new MenuItem("Delete item");
             deleteLineItem.setStyle("-fx-text-fill: #dc2626;");
+
+            editLineItem.setOnAction(event -> {
+                OrderItemDto selectedItem = row.getItem();
+                LocalOrder selectedOrder = tableView.getSelectionModel().getSelectedItem();
+                if (selectedItem != null && selectedOrder != null) {
+                    showEditItemDialog(selectedOrder, selectedItem);
+                }
+            });
 
             deleteLineItem.setOnAction(event -> {
                 OrderItemDto selectedItem = row.getItem();
@@ -265,7 +274,7 @@ public class ClientApp extends Application {
                 }
             });
 
-            itemMenu.getItems().add(deleteLineItem);
+            itemMenu.getItems().addAll(editLineItem, deleteLineItem);
             row.setOnContextMenuRequested(event -> {
                 if (!row.isEmpty()) {
                     itemMenu.show(row, event.getScreenX(), event.getScreenY());
@@ -591,6 +600,57 @@ public class ClientApp extends Application {
                     refreshTable();
                 } catch (NumberFormatException e) {
                     showAlert("Validation Error", "Amount must be a valid number.");
+                }
+            }
+        });
+    }
+
+    private void showEditItemDialog(LocalOrder parentOrder, OrderItemDto item) {
+        Dialog<ButtonType> dialog = new Dialog<>();
+        dialog.setTitle("Edit item - " + item.productName());
+        dialog.setHeaderText("Modify line item for order: " + parentOrder.orderNumber());
+
+        ButtonType saveButtonType = new ButtonType("Save changes", ButtonBar.ButtonData.OK_DONE);
+        dialog.getDialogPane().getButtonTypes().addAll(saveButtonType, ButtonType.CANCEL);
+        TextField productField = new TextField(item.productName());
+        TextField quantityField = new TextField(String.valueOf(item.quantity()));
+        TextField unitPriceField = new TextField(item.unitPrice().toPlainString());
+
+        VBox content = new VBox(10);
+        content.setPadding(new Insets(15));
+        content.getChildren().addAll(
+            new Label("Product name: "), productField,
+            new Label("Quantity: "), quantityField,
+            new Label("Unit price: "), unitPriceField
+        );
+
+        dialog.getDialogPane().setContent(content);
+
+        dialog.showAndWait().ifPresent(response -> {
+            if (response == saveButtonType) {
+                try {
+                    String product = productField.getText().trim();
+                    int quantity = Integer.parseInt(quantityField.getText().trim());
+                    BigDecimal unitPrice = new BigDecimal(unitPriceField.getText().trim());
+
+                    if (product.isEmpty() || quantity <= 0 || unitPrice.compareTo(BigDecimal.ZERO) < 0) {
+                        showAlert("Validation Error", "Product name is required, quantity must be positive and price cannot be negative.");
+                        return;
+                    }
+
+                    OrderItemDto updatedItem = new OrderItemDto(item.id(), product, quantity, unitPrice);
+                    orderDao.updateItemInOrder(parentOrder.id(), item, updatedItem);
+
+                    UUID orderId = parentOrder.id();
+                    refreshTable();
+                    orderList.stream()
+                            .filter(o -> o.id().equals(orderId))
+                            .findFirst()
+                            .ifPresent(o -> tableView.getSelectionModel().select(o));
+
+                    syncActivityLabel.setText("Item updated locally (offline).");
+                } catch (NumberFormatException e) {
+                    showAlert("Validation Error", "Quantity must be an integer and unit price must be a valid number");
                 }
             }
         });

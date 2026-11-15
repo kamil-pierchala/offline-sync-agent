@@ -475,4 +475,66 @@ public class OrderDao {
             throw new RuntimeException("Failed to remove item from order: " + orderId, e);
         }
     }
+
+    public void updateItemInOrder(UUID orderId, OrderItemDto oldItem, OrderItemDto updatedItem) {
+        String updateItemSql = """
+                UPDATE order_items
+                SET product_name = ?, quantity = ?, unit_price = ?
+                WHERE id = ? AND order_id = ?
+                """;
+
+        String selectedOrderSql = "SELECT total_amount, sync_status FROM orders WHERE id = ?";
+        String updatedOrderSql = "UPDATE orders SET total_amount = ?, updated_at = ?, sync_status = ? WHERE id = ?";
+
+        try (Connection connection = DatabaseManager.getConnection()) {
+            connection.setAutoCommit(false);
+            try {
+                try (PreparedStatement updateItemPs = connection.prepareStatement(updateItemSql)) {
+                    updateItemPs.setString(1, updatedItem.productName());
+                    updateItemPs.setInt(2, updatedItem.quantity());
+                    updateItemPs.setBigDecimal(3, updatedItem.unitPrice());
+                    updateItemPs.setString(4, updatedItem.id().toString());
+                    updateItemPs.setString(5, orderId.toString());
+                    updateItemPs.executeUpdate();
+                }
+
+                BigDecimal currentTotal = BigDecimal.ZERO;
+                SyncStatus nextStatus = SyncStatus.DIRTY_UPDATED;
+
+                try (PreparedStatement selectPs = connection.prepareStatement(selectedOrderSql)) {
+                    selectPs.setString(1, orderId.toString());
+                    try (ResultSet rs = selectPs.executeQuery()) {
+                        if (rs.next()) {
+                            currentTotal = rs.getBigDecimal("total_amount");
+                            SyncStatus existingStatus = SyncStatus.valueOf(rs.getString("sync_status"));
+                            // if the record was created locally and has not yet been synchronized, we leave it as DIRTY_CREATED
+                            if (existingStatus == SyncStatus.DIRTY_CREATED) {
+                                nextStatus = SyncStatus.DIRTY_CREATED;
+                            }
+                        }
+                    }
+
+                    BigDecimal delta = updatedItem.calculateLineTotal().subtract(oldItem.calculateLineTotal());
+                    BigDecimal newTotal = currentTotal.add(delta).max(BigDecimal.ZERO);
+
+                    try (PreparedStatement updateOrderPs = connection.prepareStatement(updatedOrderSql)) {
+                        updateOrderPs.setBigDecimal(1, newTotal);
+                        updateOrderPs.setString(2, Instant.now().toString());
+                        updateOrderPs.setString(3, nextStatus.name());
+                        updateOrderPs.setString(4, orderId.toString());
+                        updateOrderPs.executeUpdate();
+                    }
+
+                    connection.commit();
+                } catch (SQLException e) {
+                    connection.rollback();
+                    throw e;
+                }
+            } catch (SQLException e) {
+                throw new RuntimeException("Failed to update item in order: " + orderId, e);
+            }
+        } catch (Exception e) {
+            throw new RuntimeException(e);
+        }
+    }
 }
