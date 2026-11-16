@@ -26,6 +26,10 @@ import javafx.scene.shape.Circle;
 import javafx.stage.Stage;
 import javafx.collections.transformation.FilteredList;
 import javafx.collections.transformation.SortedList;
+import javafx.stage.FileChooser;
+import java.io.File;
+import java.io.IOException;
+import java.nio.file.Files;
 
 import java.math.BigDecimal;
 import java.time.Instant;
@@ -102,6 +106,8 @@ public class ClientApp extends Application {
         syncFilterBox.setValue("ALL");
 
         Button clearFilterButton = new Button("Clear filters");
+        Button exportCsvButton = new Button("Export CSV");
+        exportCsvButton.setStyle("-fx-background-color: #0f766e; -fx-text-fill: white; -fx-font-weight: bold;");
 
         Label summaryLabel = new Label("Visible orders: 0 | Total: 0.00");
         summaryLabel.setStyle("-fx-font-weight: bold; -fx-text-fill: #1f2937;");
@@ -109,7 +115,7 @@ public class ClientApp extends Application {
         Region filterSpacer = new Region();
         HBox.setHgrow(filterSpacer, Priority.ALWAYS);
 
-        HBox filterBox = new HBox(10, new Label("Filter:"), searchField, syncFilterBox, clearFilterButton, filterSpacer, summaryLabel);
+        HBox filterBox = new HBox(10, new Label("Filter:"), searchField, syncFilterBox, clearFilterButton, exportCsvButton, filterSpacer, summaryLabel);
         filterBox.setPadding(new Insets(4, 10, 4, 10));
         filterBox.setAlignment(Pos.CENTER_LEFT);
         filterBox.setStyle("-fx-background-color: #f3f4f6; -fx-background-radius: 6;");
@@ -204,6 +210,33 @@ public class ClientApp extends Application {
         SortedList<LocalOrder> sortedOrders = new SortedList<>(filteredOrders);
         sortedOrders.comparatorProperty().bind(tableView.comparatorProperty());
         tableView.setItems(sortedOrders);
+
+        exportCsvButton.setOnAction(e -> {
+            FileChooser fileChooser = new FileChooser();
+            fileChooser.setTitle("Export Visible Orders to CSV");
+            fileChooser.setInitialFileName("orders_export.csv");
+            fileChooser.getExtensionFilters().add(new FileChooser.ExtensionFilter("CSV Files (*.csv)", "*.csv"));
+
+            File file = fileChooser.showSaveDialog(stage);
+            if (file != null) {
+                try {
+                    StringBuilder csv = new StringBuilder("Order Number,Customer,Total Amount,ERP Status,Sync Status,Items Count\n");
+                    for (LocalOrder order : sortedOrders) {
+                        csv.append(String.format("\"%s\",\"%s\",%s,%s,%s,%d\n",
+                                order.orderNumber().replace("\"", "\"\""),
+                                order.customerName().replace("\"", "\"\""),
+                                order.totalAmount().toPlainString(),
+                                order.status(),
+                                order.syncStatus().name(),
+                                order.items() != null ? order.items().size() : 0));
+                    }
+                    Files.writeString(file.toPath(), csv.toString());
+                    syncActivityLabel.setText("Exported " + sortedOrders.size() + " orders to " + file.getName());
+                } catch (IOException ex) {
+                    showAlert("Export Error", "Failed to save CSV file: " + ex.getMessage());
+                }
+            }
+        });
 
         // Update detail items table when order selection changes
         Label selectedOrderLabel = new Label("Order items (Select an order above to view or add items):");
