@@ -2,6 +2,7 @@ package com.pierchala.desktopclient.net;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.datatype.jsr310.JavaTimeModule;
+import com.pierchala.synccore.model.OrderDto;
 import com.pierchala.synccore.model.SyncBatchRequest;
 import com.pierchala.synccore.model.SyncBatchResponse;
 import com.pierchala.synccore.model.SyncPullResponse;
@@ -13,6 +14,8 @@ import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
 import java.time.Duration;
 import java.time.Instant;
+import java.util.Optional;
+import java.util.UUID;
 
 public class SyncHttpClient {
 
@@ -70,5 +73,12 @@ public class SyncHttpClient {
         } else {
             throw new IOException("Server responded with HTTP " + response.statusCode() + ": " + response.body());
         }
+    }
+
+    public Optional<OrderDto> fetchServerOrderById(UUID orderId) throws IOException, InterruptedException {
+        SyncPullResponse response = pullSync(null);
+        return response.items().stream()
+                .filter(item -> item.id().equals(orderId))
+                .findFirst();
     }
 }

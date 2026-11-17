@@ -5,6 +5,7 @@ import com.pierchala.desktopclient.db.OrderDao;
 import com.pierchala.desktopclient.model.LocalOrder;
 import com.pierchala.desktopclient.net.SyncHttpClient;
 import com.pierchala.desktopclient.sync.SyncCoordinator;
+import com.pierchala.synccore.model.OrderDto;
 import com.pierchala.synccore.model.OrderItemDto;
 import com.pierchala.synccore.model.SyncStatus;
 import javafx.application.Application;
@@ -17,10 +18,7 @@ import javafx.geometry.Insets;
 import javafx.geometry.Pos;
 import javafx.scene.Scene;
 import javafx.scene.control.*;
-import javafx.scene.layout.HBox;
-import javafx.scene.layout.Priority;
-import javafx.scene.layout.Region;
-import javafx.scene.layout.VBox;
+import javafx.scene.layout.*;
 import javafx.scene.paint.Color;
 import javafx.scene.shape.Circle;
 import javafx.stage.Stage;
@@ -389,6 +387,16 @@ public class ClientApp extends Application {
             MenuItem deleteItem = new MenuItem("Delete Order");
             deleteItem.setStyle("-fx-text-fill: #dc2626;");
 
+            MenuItem compareConflictItem = new MenuItem("Compare conflict details");
+            compareConflictItem.setStyle("-fx-text-fill: #7e22ce; -fx-font-weight: bold;");
+
+            compareConflictItem.setOnAction(event -> {
+                LocalOrder selected = row.getItem();
+                if (selected != null && selected.syncStatus() == SyncStatus.CONFLICT) {
+                    showConflictComparisonDialog(selected);
+                }
+            });
+
             MenuItem forceLocalItem = new MenuItem("Resolve - force local version");
             MenuItem discardLocalItem = new MenuItem("Resolve - discard local version");
             forceLocalItem.setStyle("-fx-text-fill: #9333ea; -fx-font-weight: bold;");
@@ -426,12 +434,13 @@ public class ClientApp extends Application {
                 }
             });
 
-            menu.getItems().addAll(editItem, deleteItem, new SeparatorMenuItem(), forceLocalItem, discardLocalItem);
+            menu.getItems().addAll(editItem, deleteItem, new SeparatorMenuItem(), compareConflictItem, forceLocalItem, discardLocalItem);
 
             // Dynamically show conflict resolution options only when the row is in CONFLICT status
             menu.setOnShowing(e -> {
                 LocalOrder selected = row.getItem();
                 boolean isConflict = selected != null && selected.syncStatus() == SyncStatus.CONFLICT;
+                compareConflictItem.setVisible(isConflict);
                 forceLocalItem.setVisible(isConflict);
                 discardLocalItem.setVisible(isConflict);
             });
@@ -686,6 +695,75 @@ public class ClientApp extends Application {
                     showAlert("Validation Error", "Quantity must be an integer and unit price must be a valid number");
                 }
             }
+        });
+    }
+
+    private void showConflictComparisonDialog(LocalOrder localOrder) {
+        syncActivityLabel.setText("Fetching server version for conflict comparison...");
+
+        CompletableFuture.supplyAsync(() -> {
+            try {
+                return new SyncHttpClient().fetchServerOrderById(localOrder.id());
+            } catch (Exception ex) {
+                throw new RuntimeException(ex);
+            }
+        }).thenAccept(serverOrderOpt -> Platform.runLater(() -> {
+            syncActivityLabel.setText("Ready");
+
+            if (serverOrderOpt.isEmpty()) {
+                showAlert("Conflict Details", "Order no longer exists on the server (it may have been deleted remotely).");
+                return;
+            }
+
+            OrderDto serverOrder = serverOrderOpt.get();
+
+            Dialog<ButtonType> dialog = new Dialog<>();
+            dialog.setTitle("Conflict Comparison - " + localOrder.orderNumber());
+            dialog.setHeaderText("Compare your local changes with the central server version");
+
+            ButtonType keepLocalBtn = new ButtonType("Force Local Version", ButtonBar.ButtonData.LEFT);
+            ButtonType keepServerBtn = new ButtonType("Discard Local (Accept Server)", ButtonBar.ButtonData.RIGHT);
+            dialog.getDialogPane().getButtonTypes().addAll(keepLocalBtn, keepServerBtn, ButtonType.CANCEL);
+
+            GridPane grid = new GridPane();
+            grid.setHgap(20);
+            grid.setVgap(10);
+            grid.setPadding(new Insets(15));
+
+            Label headerField = new Label("Field");
+            Label headerLocal = new Label("Local (SQLite)");
+            Label headerServer = new Label("Server (PostgreSQL)");
+            headerField.setStyle("-fx-font-weight: bold;");
+            headerLocal.setStyle("-fx-font-weight: bold; -fx-text-fill: #2563eb;");
+            headerServer.setStyle("-fx-font-weight: bold; -fx-text-fill: #16a34a;");
+
+            grid.addRow(0, headerField, headerLocal, headerServer);
+            grid.addRow(1, new Label("Customer:"), new Label(localOrder.customerName()), new Label(serverOrder.customerName()));
+            grid.addRow(2, new Label("Total Amount:"), new Label(localOrder.totalAmount().toPlainString()), new Label(serverOrder.totalAmount().toPlainString()));
+            grid.addRow(3, new Label("ERP Status:"), new Label(localOrder.status()), new Label(serverOrder.status()));
+            grid.addRow(4, new Label("Version:"), new Label(String.valueOf(localOrder.version())), new Label(String.valueOf(serverOrder.version())));
+            grid.addRow(5, new Label("Items Count:"),
+                    new Label(String.valueOf(localOrder.items() != null ? localOrder.items().size() : 0)),
+                    new Label(String.valueOf(serverOrder.items() != null ? serverOrder.items().size() : 0)));
+
+            dialog.getDialogPane().setContent(grid);
+
+            dialog.showAndWait().ifPresent(response -> {
+                if (response == keepLocalBtn) {
+                    orderDao.forceLocalUpdate(localOrder.id(), serverOrder.version() + 1);
+                    refreshTable();
+                } else if (response == keepServerBtn) {
+                    orderDao.markForServerOverwrite(localOrder.id());
+                    refreshTable();
+                    triggerSync(false);
+                }
+            });
+        })).exceptionally(throwable -> {
+            Platform.runLater(() -> {
+                syncActivityLabel.setText("Failed to fetch server details.");
+                showAlert("Connection Error", "Could not fetch server version: " + throwable.getCause().getMessage());
+            });
+            return null;
         });
     }
 
