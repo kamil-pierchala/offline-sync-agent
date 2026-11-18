@@ -5,10 +5,13 @@ import com.pierchala.synccore.model.OrderDto;
 import com.pierchala.synccore.model.SyncBatchRequest;
 import com.pierchala.synccore.model.SyncBatchResponse;
 import com.pierchala.synccore.model.SyncStatus;
+import com.pierchala.synccore.model.SyncPullResponse;
+import com.pierchala.syncserver.entity.OrderItemEntity;
 import com.pierchala.syncserver.entity.OrderEntity;
 import com.pierchala.syncserver.repository.OrderRepository;
 import com.pierchala.synccore.model.OrderItemDto;
 import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.Order;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc;
@@ -21,10 +24,12 @@ import java.math.BigDecimal;
 import java.time.Instant;
 import java.util.List;
 import java.util.UUID;
+import java.time.temporal.ChronoUnit;
 
 import static org.junit.jupiter.api.Assertions.*;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 
 @SpringBootTest(classes = ServerApp.class)
 @AutoConfigureMockMvc
@@ -153,5 +158,77 @@ class SyncServerIntegrationTest {
         assertEquals("ThinkPad T14", savedOrder.getItems().get(0).getProductName());
         assertEquals(2, savedOrder.getItems().get(0).getQuantity());
         assertEquals(new BigDecimal("4500.00"), savedOrder.getItems().get(0).getUnitPrice());
+    }
+
+    @Test
+    @Transactional
+    void shouldReturnOrderWithNestedItemsOnPull() throws Exception {
+        UUID orderId = UUID.randomUUID();
+        OrderEntity order = new OrderEntity(
+                orderId,
+                "ORD-PULL-01",
+                "Pull Test Client",
+                new BigDecimal("1500.00"),
+                "NEW",
+                Instant.now(),
+                1L
+        );
+
+        OrderItemEntity item = new OrderItemEntity(
+                UUID.randomUUID(),
+                "Dell UltraSharp Monitor",
+                1,
+                new BigDecimal("1500.00"),
+                order
+        );
+        order.addItem(item);
+        orderRepository.save(order);
+
+        // Client calls GET /api/sync/pull without 'since' parameter
+        String responseJson = mockMvc.perform(get("/api/sync/pull"))
+                .andExpect(status().isOk())
+                .andReturn()
+                .getResponse()
+                .getContentAsString();
+
+        SyncPullResponse pullResponse = objectMapper.readValue(responseJson, SyncPullResponse.class);
+
+        // Response contains the order along with its line item
+        assertEquals(1, pullResponse.items().size());
+        OrderDto pulledOrder = pullResponse.items().get(0);
+        assertEquals("ORD-PULL-01", pulledOrder.orderNumber());
+        assertEquals(1, pulledOrder.items().size());
+        assertEquals("Dell UltraSharp Monitor", pulledOrder.items().get(0).productName());
+    }
+
+    @Test
+    void shouldFilterOrdersBySinceTimestampOnDeltaPull() throws Exception {
+        // One older order (2 hours ago) and one recent order
+        Instant now = Instant.now();
+        OrderEntity oldOrder = new OrderEntity(
+                UUID.randomUUID(), "ORD-OLD", "Old Client", new BigDecimal("100.00"),
+                "COMPLETED", now.minus(2, ChronoUnit.HOURS), 1L
+        );
+
+        OrderEntity recentOrder = new OrderEntity(
+                UUID.randomUUID(), "ORD-NEW", "New Client", new BigDecimal("200.00"),
+                "NEW", now, 1L
+        );
+        orderRepository.saveAll(List.of(oldOrder, recentOrder));
+
+        // Client requests delta updates since 1 hour
+        Instant sinceParam = now.minus(1, ChronoUnit.HOURS);
+        String responseJson = mockMvc.perform(get("/api/sync/pull")
+                .param("since", sinceParam.toString()))
+                .andExpect(status().isOk())
+                .andReturn()
+                .getResponse()
+                .getContentAsString();
+
+        SyncPullResponse pullResponse = objectMapper.readValue(responseJson, SyncPullResponse.class);
+
+        // Only the recent order should be returned
+        assertEquals(1, pullResponse.items().size());
+        assertEquals("ORD-NEW", pullResponse.items().get(0).orderNumber());
     }
 }
