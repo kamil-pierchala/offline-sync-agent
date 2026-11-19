@@ -134,6 +134,10 @@ public class ClientApp extends Application {
         colAmount.setCellValueFactory(cellData ->
                 new SimpleObjectProperty<>(cellData.getValue().totalAmount()));
 
+        TableColumn<LocalOrder, Integer> colItemsCount = new TableColumn<>("Items");
+        colItemsCount.setCellValueFactory(cellData ->
+                new SimpleObjectProperty<>(cellData.getValue().items() != null ? cellData.getValue().items().size() : 0));
+
         TableColumn<LocalOrder, String> colStatus = new TableColumn<>("ERP Status");
         colStatus.setCellValueFactory(cellData ->
                 new SimpleStringProperty(cellData.getValue().status()));
@@ -168,7 +172,7 @@ public class ClientApp extends Application {
         });
 
         // Add columns exactly once
-        tableView.getColumns().addAll(colNumber, colCustomer, colAmount, colStatus, colSync);
+        tableView.getColumns().addAll(colNumber, colCustomer, colAmount, colItemsCount, colStatus, colSync);
 
         // Wrap orderList in FilteredList and SortedList for real-time search and sorting
         FilteredList<LocalOrder> filteredOrders = new FilteredList<>(orderList, p -> true);
