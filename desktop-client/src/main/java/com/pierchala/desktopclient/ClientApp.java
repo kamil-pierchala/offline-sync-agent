@@ -2,11 +2,13 @@ package com.pierchala.desktopclient;
 
 import com.pierchala.desktopclient.db.DatabaseManager;
 import com.pierchala.desktopclient.db.OrderDao;
+import com.pierchala.desktopclient.db.ProductDao;
 import com.pierchala.desktopclient.model.LocalOrder;
 import com.pierchala.desktopclient.net.SyncHttpClient;
 import com.pierchala.desktopclient.sync.SyncCoordinator;
 import com.pierchala.synccore.model.OrderDto;
 import com.pierchala.synccore.model.OrderItemDto;
+import com.pierchala.synccore.model.ProductDto;
 import com.pierchala.synccore.model.SyncStatus;
 import javafx.application.Application;
 import javafx.application.Platform;
@@ -42,8 +44,10 @@ import java.util.concurrent.atomic.AtomicBoolean;
 public class ClientApp extends Application {
 
     private final OrderDao orderDao = new OrderDao();
+    private final ProductDao productDao = new ProductDao();
     private final SyncCoordinator syncCoordinator = new SyncCoordinator(orderDao, new SyncHttpClient());
     private final ObservableList<LocalOrder> orderList = FXCollections.observableArrayList();
+    private final ObservableList<ProductDto> productList = FXCollections.observableArrayList();
     private final ObservableList<OrderItemDto> selectedOrderItemsList = FXCollections.observableArrayList();
     private TableView<LocalOrder> tableView;
     private TableView<OrderItemDto> itemsTableView;
@@ -212,6 +216,29 @@ public class ClientApp extends Application {
         SortedList<LocalOrder> sortedOrders = new SortedList<>(filteredOrders);
         sortedOrders.comparatorProperty().bind(tableView.comparatorProperty());
         tableView.setItems(sortedOrders);
+
+        // Product catalog table view synced from central inventory
+        TableView<ProductDto> productTableView = new TableView<>();
+        productTableView.setColumnResizePolicy(TableView.CONSTRAINED_RESIZE_POLICY);
+
+        TableColumn<ProductDto, String> colProductCode = new TableColumn<>("Product Code");
+        colProductCode.setCellValueFactory(cellData ->
+                new SimpleStringProperty(cellData.getValue().productCode()));
+
+        TableColumn<ProductDto, String> colProductName = new TableColumn<>("Product Name");
+        colProductName.setCellValueFactory(cellData ->
+                new SimpleStringProperty(cellData.getValue().name()));
+
+        TableColumn<ProductDto, BigDecimal> colCatalogPrice = new TableColumn<>("Unit Price");
+        colCatalogPrice.setCellValueFactory(cellData ->
+                new SimpleObjectProperty<>(cellData.getValue().unitPrice()));
+
+        TableColumn<ProductDto, Integer> colStockQty = new TableColumn<>("Stock Quantity");
+        colStockQty.setCellValueFactory(cellData ->
+                new SimpleObjectProperty<>(cellData.getValue().stockQuantity()));
+
+        productTableView.getColumns().addAll(colProductCode, colProductName, colCatalogPrice, colStockQty);
+        productTableView.setItems(productList);
 
         exportCsvButton.setOnAction(e -> {
             FileChooser fileChooser = new FileChooser();
@@ -511,16 +538,30 @@ public class ClientApp extends Application {
         statusBar.setAlignment(Pos.CENTER_LEFT);
         statusBar.setPadding(new Insets(4, 2, 4, 2));
 
-        // Main layout container
-        VBox root = new VBox(10, formBox, filterBox, tableView, selectedOrderLabel, itemFormBox, itemsTableView, statusBar);
-        root.setPadding(new Insets(10));
+        // Orders module view
+        VBox ordersModuleBox = new VBox(10, formBox, filterBox, tableView, selectedOrderLabel, itemFormBox, itemsTableView);
         VBox.setVgrow(tableView, Priority.ALWAYS);
+
+        // ERP module tabs
+        TabPane moduleTabPane = new TabPane();
+        Tab ordersTab = new Tab("Sales & Orders", ordersModuleBox);
+        ordersTab.setClosable(false);
+
+        Tab inventoryTab = new Tab("Product Catalog (Inventory)", productTableView);
+        inventoryTab.setClosable(false);
+
+        moduleTabPane.getTabs().addAll(ordersTab, inventoryTab);
+
+        // Main layout container
+        VBox root = new VBox(10, moduleTabPane, statusBar);
+        root.setPadding(new Insets(10));
+        VBox.setVgrow(moduleTabPane, Priority.ALWAYS);
 
         Scene scene = new Scene(root, 920, 680);
         stage.setScene(scene);
         stage.show();
 
-        // Load persisted orders from the local SQLite database
+        // Load persisted orders and products from the local SQLite database
         refreshTable();
 
         // Start background auto-sync every 10 seconds (initial delay: 2 seconds)
@@ -595,6 +636,7 @@ public class ClientApp extends Application {
 
     private void refreshTable() {
         orderList.setAll(orderDao.findAllActive());
+        productList.setAll(productDao.findAll());
     }
 
     private void showAlert(String title, String message) {
