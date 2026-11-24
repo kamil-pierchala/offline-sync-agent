@@ -1,11 +1,9 @@
 package com.pierchala.desktopclient.net;
 
+import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.datatype.jsr310.JavaTimeModule;
-import com.pierchala.synccore.model.OrderDto;
-import com.pierchala.synccore.model.SyncBatchRequest;
-import com.pierchala.synccore.model.SyncBatchResponse;
-import com.pierchala.synccore.model.SyncPullResponse;
+import com.pierchala.synccore.model.*;
 
 import java.io.IOException;
 import java.net.URI;
@@ -14,6 +12,7 @@ import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
 import java.time.Duration;
 import java.time.Instant;
+import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
 
@@ -80,5 +79,22 @@ public class SyncHttpClient {
         return response.items().stream()
                 .filter(item -> item.id().equals(orderId))
                 .findFirst();
+    }
+
+    public List<ProductDto> pullProducts() throws IOException, InterruptedException {
+        HttpRequest request = HttpRequest.newBuilder()
+                .uri(URI.create("http://localhost:8080/api/inventory/products"))
+                .timeout(Duration.ofSeconds(10))
+                .header("Accept", "application/json")
+                .GET()
+                .build();
+
+        HttpResponse<String> response = httpClient.send(request, HttpResponse.BodyHandlers.ofString());
+
+        if (response.statusCode() == 200) {
+            return objectMapper.readValue(response.body(), new TypeReference<List<ProductDto>>() {});
+        } else {
+            throw new IOException("Failed to pull products, HTTP " + response.statusCode());
+        }
     }
 }

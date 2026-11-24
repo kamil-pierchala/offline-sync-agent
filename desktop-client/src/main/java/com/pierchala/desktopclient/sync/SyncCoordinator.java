@@ -1,12 +1,10 @@
 package com.pierchala.desktopclient.sync;
 
 import com.pierchala.desktopclient.db.OrderDao;
+import com.pierchala.desktopclient.db.ProductDao;
 import com.pierchala.desktopclient.model.LocalOrder;
 import com.pierchala.desktopclient.net.SyncHttpClient;
-import com.pierchala.synccore.model.OrderDto;
-import com.pierchala.synccore.model.SyncBatchRequest;
-import com.pierchala.synccore.model.SyncBatchResponse;
-import com.pierchala.synccore.model.SyncPullResponse;
+import com.pierchala.synccore.model.*;
 
 import java.time.Instant;
 import java.util.List;
@@ -18,11 +16,13 @@ public class SyncCoordinator {
     private final OrderDao orderDao;
     private final SyncHttpClient httpClient;
     private final String clientId;
+    private final ProductDao productDao;
 
     public SyncCoordinator(OrderDao orderDao, SyncHttpClient httpClient) {
         this.orderDao = orderDao;
         this.httpClient = httpClient;
         this.clientId = "desktop-client-" + UUID.randomUUID().toString().substring(0, 8);
+        this.productDao = new ProductDao();
     }
 
     public SyncResult performFullSync() throws Exception {
@@ -59,6 +59,11 @@ public class SyncCoordinator {
         // Fetch remote changes since last sync
         Optional<Instant> lastSyncOpt = orderDao.getLastSyncTimestamp();
         SyncPullResponse pullResponse = httpClient.pullSync(lastSyncOpt.orElse(null));
+
+        List<ProductDto> products = httpClient.pullProducts();
+        if (!products.isEmpty()) {
+            productDao.upsertAll(products);
+        }
 
         for (OrderDto remoteOrder : pullResponse.items()) {
             orderDao.upsertFromServer(remoteOrder);
