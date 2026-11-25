@@ -346,22 +346,49 @@ public class ClientApp extends Application {
         });
 
         // Form for adding line items to selected order
-        TextField productField = new TextField();
-        productField.setPromptText("Product name (e.g., Laptop)");
+        ComboBox<ProductDto> productComboBox = new ComboBox<>(productList);
+        productComboBox.setPromptText("Select product from catalog...");
+        productComboBox.setPrefWidth(280);
+
+        // Display readable product info in dropdown and button cell
+        productComboBox.setCellFactory(lv -> new ListCell<>() {
+            @Override
+            protected void updateItem(ProductDto item, boolean empty) {
+                super.updateItem(item, empty);
+                setText(empty || item == null ? null : String.format("%s - %s (Stock: %d)", item.productCode(), item.name(), item.stockQuantity()));
+            }
+        });
+        productComboBox.setButtonCell(new ListCell<>() {
+            @Override
+            protected void updateItem(ProductDto item, boolean empty) {
+                super.updateItem(item, empty);
+                setText(empty || item == null ? null : String.format("%s - %s", item.productCode(), item.name()));
+            }
+        });
 
         TextField qtyField = new TextField();
         qtyField.setPromptText("Quantity");
-        qtyField.setPrefWidth(70);
+        qtyField.setPrefWidth(80);
 
         TextField unitPriceField = new TextField();
         unitPriceField.setPromptText("Unit price");
         unitPriceField.setPrefWidth(110);
 
+        // Autofill unit price when a catalog product is selected
+        productComboBox.valueProperty().addListener((obs, oldVal, selectedProd) -> {
+            if (selectedProd != null) {
+                unitPriceField.setText(selectedProd.unitPrice().toPlainString());
+                if (qtyField.getText().isBlank()) {
+                    qtyField.setText("1");
+                }
+            }
+        });
+
         Button addItemButton = new Button("Add item to selected order");
         addItemButton.setStyle("-fx-background-color: #4f46e5; -fx-text-fill: white; -fx-font-weight: bold;");
 
-        HBox.setHgrow(productField, Priority.ALWAYS);
-        HBox itemFormBox = new HBox(10, productField, qtyField, unitPriceField, addItemButton);
+        HBox.setHgrow(productComboBox, Priority.ALWAYS);
+        HBox itemFormBox = new HBox(10, productComboBox, qtyField, unitPriceField, addItemButton);
         itemFormBox.setAlignment(Pos.CENTER_LEFT);
 
         addItemButton.setOnAction(e -> {
@@ -371,12 +398,12 @@ public class ClientApp extends Application {
                 return;
             }
 
-            String prod = productField.getText().trim();
+            ProductDto selectedProduct = productComboBox.getValue();
             String qtyStr = qtyField.getText().trim();
             String priceStr = unitPriceField.getText().trim();
 
-            if (prod.isEmpty() || qtyStr.isEmpty() || priceStr.isEmpty()) {
-                showAlert("Form error", "All item fields are required.");
+            if (selectedProduct == null || qtyStr.isEmpty() || priceStr.isEmpty()) {
+                showAlert("Form error", "Please select a product and enter quantity and unit price.");
                 return;
             }
 
@@ -388,10 +415,11 @@ public class ClientApp extends Application {
                     return;
                 }
 
-                OrderItemDto newItem = new OrderItemDto(UUID.randomUUID(), prod, qty, unitPrice);
+                String formattedProductName = selectedProduct.productCode() + " - " + selectedProduct.name();
+                OrderItemDto newItem = new OrderItemDto(UUID.randomUUID(), formattedProductName, qty, unitPrice);
                 orderDao.addItemToOrder(selectedOrder.id(), newItem);
 
-                productField.clear();
+                productComboBox.setValue(null);
                 qtyField.clear();
                 unitPriceField.clear();
 
