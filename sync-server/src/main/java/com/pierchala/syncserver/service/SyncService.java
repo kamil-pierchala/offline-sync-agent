@@ -20,9 +20,12 @@ import java.util.Optional;
 public class SyncService {
 
     private final OrderRepository orderRepository;
+    private final com.pierchala.syncserver.repository.ProductRepository productRepository;
 
-    public SyncService(OrderRepository orderRepository) {
+    public SyncService(OrderRepository orderRepository,
+                       com.pierchala.syncserver.repository.ProductRepository productRepository) {
         this.orderRepository = orderRepository;
+        this.productRepository = productRepository;
     }
 
     @Transactional
@@ -55,6 +58,7 @@ public class SyncService {
                                 ));
                             }
                         }
+                        deductStockForItems(dto.items());
                         orderRepository.save(entity);
                         results.add(new SyncBatchResponse.SyncedItem(dto.id(), 1L, true, null));
                     }
@@ -82,6 +86,9 @@ public class SyncService {
                             entity.setStatus(dto.status());
                             entity.setUpdatedAt(Instant.now());
                             entity.setVersion(entity.getVersion() + 1);
+
+                            // Adjust inventory stock based on item quantity delta
+                            adjustStockOnUpdate(entity.getItems(), dto.items());
 
                             // Update order items
                             entity.clearItems();
@@ -169,5 +176,59 @@ public class SyncService {
                 .toList();
 
         return new SyncPullResponse(dtos, fetchTime);
+    }
+
+    private void deductStockForItems(List<com.pierchala.synccore.model.OrderItemDto> items) {
+        if (items == null) return;
+        for (var item : items) {
+            String rawName = item.productName();
+            if (rawName != null && rawName.contains(" - ")) {
+                String productCode = rawName.split(" - ", 2)[0].trim();
+                productRepository.findByProductCode(productCode).ifPresent(product -> {
+                    int updatedStock = Math.max(0, product.getStockQuantity() - item.quantity());
+                    product.setStockQuantity(updatedStock);
+                    product.setUpdatedAt(Instant.now());
+                    productRepository.save(product);
+                });
+            }
+        }
+    }
+
+    private void adjustStockOnUpdate(List<OrderItemEntity> oldItems, List<OrderItemDto> newItems) {
+        java.util.Map<String, Integer> oldQtyByCode = new java.util.HashMap<>();
+        if (oldItems != null) {
+            for (OrderItemEntity old : oldItems) {
+                if (old.getProductName() != null && old.getProductName().contains(" - ")) {
+                    String code = old.getProductName().split(" - ", 2)[0].trim();
+                    oldQtyByCode.merge(code, old.getQuantity(), Integer::sum);
+                }
+            }
+        }
+
+        java.util.Map<String, Integer> newQtyByCode = new java.util.HashMap<>();
+        if (newItems != null) {
+            for (OrderItemDto item : newItems) {
+                if (item.productName() != null && item.productName().contains(" - ")) {
+                    String code = item.productName().split(" - ", 2)[0].trim();
+                    newQtyByCode.merge(code, item.quantity(), Integer::sum);
+                }
+            }
+        }
+
+        java.util.Set<String> allCodes = new java.util.HashSet<>();
+        allCodes.addAll(oldQtyByCode.keySet());
+        allCodes.addAll(newQtyByCode.keySet());
+
+        for (String code : allCodes) {
+            int delta = newQtyByCode.getOrDefault(code, 0) - oldQtyByCode.getOrDefault(code, 0);
+            if (delta != 0) {
+                productRepository.findByProductCode(code).ifPresent(product -> {
+                    int updatedStock = Math.max(0, product.getStockQuantity() - delta);
+                    product.setStockQuantity(updatedStock);
+                    product.setUpdatedAt(Instant.now());
+                    productRepository.save(product);
+                });
+            }
+        }
     }
 }
