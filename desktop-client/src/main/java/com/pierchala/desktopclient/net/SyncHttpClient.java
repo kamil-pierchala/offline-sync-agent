@@ -97,4 +97,41 @@ public class SyncHttpClient {
             throw new IOException("Failed to pull products, HTTP " + response.statusCode());
         }
     }
+
+    public List<CustomerDto> pullCustomers() throws IOException, InterruptedException {
+        HttpRequest request = HttpRequest.newBuilder()
+                .uri(URI.create("http://localhost:8080/api/crm/customers"))
+                .timeout(Duration.ofSeconds(10))
+                .header("Accept", "application/json")
+                .GET()
+                .build();
+
+        HttpResponse<String> response = httpClient.send(request, HttpResponse.BodyHandlers.ofString());
+
+        if (response.statusCode() == 200) {
+            return objectMapper.readValue(response.body(), new TypeReference<List<CustomerDto>>() {});
+        } else {
+            throw new IOException("Failed to pull customers, HTTP " + response.statusCode());
+        }
+    }
+
+    public CustomerDto pushCustomer(CustomerDto customer) throws IOException, InterruptedException {
+        String jsonPayload = objectMapper.writeValueAsString(customer);
+
+        HttpRequest request = HttpRequest.newBuilder()
+                .uri(URI.create("http://localhost:8080/api/crm/customers"))
+                .timeout(Duration.ofSeconds(10))
+                .header("Content-Type", "application/json")
+                .header("Accept", "application/json")
+                .POST(HttpRequest.BodyPublishers.ofString(jsonPayload))
+                .build();
+
+        HttpResponse<String> response = httpClient.send(request, HttpResponse.BodyHandlers.ofString());
+
+        if (response.statusCode() == 200) {
+            return objectMapper.readValue(response.body(), CustomerDto.class);
+        } else {
+            throw new IOException("Failed to push customer, HTTP " + response.statusCode());
+        }
+    }
 }

@@ -10,6 +10,8 @@ import com.pierchala.synccore.model.OrderDto;
 import com.pierchala.synccore.model.OrderItemDto;
 import com.pierchala.synccore.model.ProductDto;
 import com.pierchala.synccore.model.SyncStatus;
+import com.pierchala.synccore.model.CustomerDto;
+import com.pierchala.desktopclient.db.CustomerDao;
 import javafx.application.Application;
 import javafx.application.Platform;
 import javafx.beans.property.SimpleObjectProperty;
@@ -43,9 +45,11 @@ import java.util.concurrent.atomic.AtomicBoolean;
 
 public class ClientApp extends Application {
 
+    private final CustomerDao customerDao = new CustomerDao();
     private final OrderDao orderDao = new OrderDao();
     private final ProductDao productDao = new ProductDao();
     private final SyncCoordinator syncCoordinator = new SyncCoordinator(orderDao, new SyncHttpClient());
+    private final ObservableList<CustomerDto> customerList = FXCollections.observableArrayList();
     private final ObservableList<LocalOrder> orderList = FXCollections.observableArrayList();
     private final ObservableList<ProductDto> productList = FXCollections.observableArrayList();
     private final ObservableList<OrderItemDto> selectedOrderItemsList = FXCollections.observableArrayList();
@@ -76,9 +80,16 @@ public class ClientApp extends Application {
         orderNumberField.setPromptText("Order Number (e.g., ORD-001)");
         orderNumberField.setPrefWidth(220);
 
-        TextField customerNameField = new TextField();
-        customerNameField.setPromptText("Customer Name");
-        customerNameField.setPrefWidth(180);
+        ComboBox<CustomerDto> customerComboBox = new ComboBox<>(customerList);
+        customerComboBox.setPromptText("Select customer");
+        customerComboBox.setPrefWidth(220);
+        customerComboBox.setButtonCell(new ListCell<>() {
+            @Override
+            protected void updateItem(CustomerDto item, boolean empty) {
+                super.updateItem(item, empty);
+                setText(empty || item == null ? null : item.companyName());
+            }
+        });
 
         TextField amountField = new TextField();
         amountField.setPromptText("Total Amount (e.g., 1500.00)");
@@ -91,10 +102,10 @@ public class ClientApp extends Application {
         syncButton.setStyle("-fx-background-color: #16a34a; -fx-text-fill: white; -fx-font-weight: bold;");
 
         HBox.setHgrow(orderNumberField, Priority.ALWAYS);
-        HBox.setHgrow(customerNameField, Priority.ALWAYS);
+        HBox.setHgrow(customerComboBox, Priority.ALWAYS);
         HBox.setHgrow(amountField, Priority.ALWAYS);
 
-        HBox formBox = new HBox(10, orderNumberField, customerNameField, amountField, addButton, syncButton);
+        HBox formBox = new HBox(10, orderNumberField, customerComboBox, amountField, addButton, syncButton);
         formBox.setPadding(new Insets(10));
         formBox.setAlignment(Pos.CENTER_LEFT);
 
@@ -516,7 +527,8 @@ public class ClientApp extends Application {
         // Order creation action
         addButton.setOnAction(e -> {
             String num = orderNumberField.getText().trim();
-            String cust = customerNameField.getText().trim();
+            CustomerDto selectedCustomer = customerComboBox.getValue();
+            String cust = selectedCustomer != null ? selectedCustomer.companyName() : "";
             String amtStr = amountField.getText().trim();
 
             if (num.isEmpty() || cust.isEmpty() || amtStr.isEmpty()) {
@@ -541,7 +553,7 @@ public class ClientApp extends Application {
                 refreshTable();
 
                 orderNumberField.clear();
-                customerNameField.clear();
+                customerComboBox.setValue(null);
                 amountField.clear();
                 syncActivityLabel.setText("Saved locally (offline).");
             } catch (NumberFormatException ex) {
@@ -578,7 +590,84 @@ public class ClientApp extends Application {
         Tab inventoryTab = new Tab("Product Catalog (Inventory)", productTableView);
         inventoryTab.setClosable(false);
 
-        moduleTabPane.getTabs().addAll(ordersTab, inventoryTab);
+        // Customers (CRM) module view
+        TextField companyNameField = new TextField();
+        companyNameField.setPromptText("Company Name");
+
+        TextField taxIdField = new TextField();
+        taxIdField.setPromptText("Tax ID (NIP)");
+        taxIdField.setPrefWidth(140);
+
+        TextField emailField = new TextField();
+        emailField.setPromptText("E-mail");
+
+        TextField cityField = new TextField();
+        cityField.setPromptText("City");
+        cityField.setPrefWidth(130);
+
+        Button addCustomerBtn = new Button("Add Customer");
+        addCustomerBtn.setStyle("-fx-background-color: #2563eb; -fx-text-fill: white; -fx-font-weight: bold;");
+
+        HBox.setHgrow(companyNameField, Priority.ALWAYS);
+        HBox.setHgrow(emailField, Priority.ALWAYS);
+        HBox customerFormBox = new HBox(10, companyNameField, taxIdField, emailField, cityField, addCustomerBtn);
+        customerFormBox.setPadding(new Insets(10));
+        customerFormBox.setAlignment(Pos.CENTER_LEFT);
+
+        TableView<CustomerDto> customerTableView = new TableView<>();
+        customerTableView.setColumnResizePolicy(TableView.CONSTRAINED_RESIZE_POLICY);
+
+        TableColumn<CustomerDto, String> colCompName = new TableColumn<>("Company Name");
+        colCompName.setCellValueFactory(c -> new SimpleStringProperty(c.getValue().companyName()));
+
+        TableColumn<CustomerDto, String> colTaxId = new TableColumn<>("Tax ID");
+        colTaxId.setCellValueFactory(c -> new SimpleStringProperty(c.getValue().taxId()));
+
+        TableColumn<CustomerDto, String> colEmail = new TableColumn<>("E-mail");
+        colEmail.setCellValueFactory(c -> new SimpleStringProperty(c.getValue().email()));
+
+        TableColumn<CustomerDto, String> colCity = new TableColumn<>("City");
+        colCity.setCellValueFactory(c -> new SimpleStringProperty(c.getValue().city()));
+
+        customerTableView.getColumns().addAll(colCompName, colTaxId, colEmail, colCity);
+        customerTableView.setItems(customerList);
+
+        addCustomerBtn.setOnAction(e -> {
+            String comp = companyNameField.getText().trim();
+            String tax = taxIdField.getText().trim();
+            String mail = emailField.getText().trim();
+            String city = cityField.getText().trim();
+
+            if (comp.isEmpty() || tax.isEmpty() || mail.isEmpty() || city.isEmpty()) {
+                showAlert("Form Error", "All customer fields are required.");
+                return;
+            }
+
+            CustomerDto newCustomer = new CustomerDto(UUID.randomUUID(), comp, tax, mail, city, Instant.now());
+            customerDao.upsertAll(java.util.List.of(newCustomer));
+            refreshTable();
+
+            companyNameField.clear();
+            taxIdField.clear();
+            emailField.clear();
+            cityField.clear();
+
+            // Push new customer to server in background
+            CompletableFuture.runAsync(() -> {
+                try {
+                    new SyncHttpClient().pushCustomer(newCustomer);
+                } catch (Exception ignored) {}
+            });
+            syncActivityLabel.setText("Customer added: " + comp);
+        });
+
+        VBox customersModuleBox = new VBox(10, customerFormBox, customerTableView);
+        VBox.setVgrow(customerTableView, Priority.ALWAYS);
+
+        Tab customersTab = new Tab("Customers (CRM)", customersModuleBox);
+        customersTab.setClosable(false);
+
+        moduleTabPane.getTabs().addAll(ordersTab, inventoryTab, customersTab);
 
         // Main layout container
         VBox root = new VBox(10, moduleTabPane, statusBar);
@@ -665,6 +754,7 @@ public class ClientApp extends Application {
     private void refreshTable() {
         orderList.setAll(orderDao.findAllActive());
         productList.setAll(productDao.findAll());
+        customerList.setAll(customerDao.findAll());
     }
 
     private void showAlert(String title, String message) {

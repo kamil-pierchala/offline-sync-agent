@@ -60,6 +60,17 @@ public class DatabaseManager {
             );
             """;
 
+        String createCustomersTableSql = """
+                CREATE TABLE IF NOT EXISTS customers (
+                id TEXT PRIMARY KEY,
+                company_name TEXT NOT NULL,
+                tax_id TEXT NOT NULL UNIQUE,
+                email TEXT NOT NULL,
+                city TEXT NOT NULL,
+                updated_at TEXT NOT NULL
+                );
+                """;
+
         try (Connection conn = getConnection();
              Statement stmt = conn.createStatement()) {
             stmt.execute("PRAGMA foreign_keys = ON;");
@@ -67,6 +78,7 @@ public class DatabaseManager {
             stmt.execute(createOrderItemsTableSql);
             stmt.execute(createMetadataTableSql);
             stmt.execute(createProductsTableSql);
+            stmt.execute(createCustomersTableSql);
         } catch (SQLException e) {
             throw new RuntimeException("Failed to initialize SQLite database", e);
         }

@@ -1,5 +1,6 @@
 package com.pierchala.desktopclient.sync;
 
+import com.pierchala.desktopclient.db.CustomerDao;
 import com.pierchala.desktopclient.db.OrderDao;
 import com.pierchala.desktopclient.db.ProductDao;
 import com.pierchala.desktopclient.model.LocalOrder;
@@ -17,12 +18,14 @@ public class SyncCoordinator {
     private final SyncHttpClient httpClient;
     private final String clientId;
     private final ProductDao productDao;
+    private final CustomerDao customerDao;
 
     public SyncCoordinator(OrderDao orderDao, SyncHttpClient httpClient) {
         this.orderDao = orderDao;
         this.httpClient = httpClient;
         this.clientId = "desktop-client-" + UUID.randomUUID().toString().substring(0, 8);
         this.productDao = new ProductDao();
+        this.customerDao = new CustomerDao();
     }
 
     public SyncResult performFullSync() throws Exception {
@@ -61,6 +64,12 @@ public class SyncCoordinator {
         SyncPullResponse pullResponse = httpClient.pullSync(lastSyncOpt.orElse(null));
 
         List<ProductDto> products = httpClient.pullProducts();
+        List<CustomerDto> customers = httpClient.pullCustomers();
+
+        if (!customers.isEmpty()) {
+            customerDao.upsertAll(customers);
+        }
+
         if (!products.isEmpty()) {
             productDao.upsertAll(products);
         }
